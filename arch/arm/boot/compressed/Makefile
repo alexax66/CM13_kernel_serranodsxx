@@ -35,7 +35,7 @@ ifeq ($(CONFIG_CRYPTO_FIPS_OLD_INTEGRITY_CHECK),y)
 AFLAGS_head.o += -DFIPS_KERNEL_RAM_BASE=0x80208000
 endif
 HEAD	= head.o
-OBJS	+= misc.o
+MISC	+= misc.o
 DECOMPRESS = decompress.o
 FONTC	= $(srctree)/drivers/video/console/font_acorn_8x8.c
 
