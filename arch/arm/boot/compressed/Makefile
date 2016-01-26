@@ -36,7 +36,17 @@ AFLAGS_head.o += -DFIPS_KERNEL_RAM_BASE=0x80208000
 endif
 HEAD	= head.o
 MISC	+= misc.o
+ifeq ($(CONFIG_KERNEL_LZ4),y)
+CFLAGS_decompress.o := -Os
+endif
+ifeq ($(CONFIG_KERNEL_LZMA),y)
+CFLAGS_decompress.o := -Os
+endif
+
 DECOMPRESS = decompress.o
+ifeq ($(CONFIG_KERNEL_LZ4),y)
+CFLAGS_decompress.o := -Os
+endif
 FONTC	= $(srctree)/drivers/video/console/font_acorn_8x8.c
 
 # string library code (-Os is enforced to keep it much smaller)
