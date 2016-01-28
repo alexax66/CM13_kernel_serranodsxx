@@ -364,7 +364,7 @@ KERNEL_FLAGS	= -marm -mtune=cortex-a15 -mcpu=cortex-a15 -mfpu=neon-vfpv4 \
 		  -fgcse-las -ftree-loop-im -ftree-loop-ivcanon -fweb \
 		  -frename-registers -ftree-loop-linear -ftree-vectorize \
 		  -fmodulo-sched -ffast-math -funsafe-math-optimizations \
-		  -std=gnu89
+		  -std=gnu89 -fno-pic
 
 CFLAGS_MODULE   = -DMODULE $(KERNEL_FLAGS)
 AFLAGS_MODULE   = -DMODULE $(KERNEL_FLAGS)
