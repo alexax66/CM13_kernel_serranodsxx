@@ -74,19 +74,9 @@ const struct exception_table_entry *
 search_extable(const struct exception_table_entry *first,
 	       const struct exception_table_entry *last,
 	       unsigned long value);
-#if defined(CONFIG_BUILDTIME_EXTABLE_SORT) && !defined(CONFIG_MODULES)
 void sort_extable(struct exception_table_entry *start,
 		  struct exception_table_entry *finish);
 void sort_main_extable(void);
-#else
-static inline void sort_extable(struct exception_table_entry *start,
-		struct exception_table_entry *finish)
-{
-}
-static inline void sort_main_extable(void)
-{
-}
-#endif
 void trim_init_extable(struct module *m);
 
 #ifdef MODULE
