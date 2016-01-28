@@ -326,7 +326,7 @@ static u32 ddl_set_dec_property(struct ddl_client_context *ddl,
 				decoder->adaptive_width = decoder->client_frame_size.width;
 				decoder->adaptive_height = decoder->client_frame_size.height;
 			}
-			DDL_MSG_LOW("set VCD_I_FRAME_SIZE width = %d"
+			DDL_MSG_HIGH("set VCD_I_FRAME_SIZE width = %d"
 				" height = %d\n",
 				frame_size->width, frame_size->height);
 			vcd_status = VCD_S_SUCCESS;
@@ -518,6 +518,18 @@ static u32 ddl_set_dec_property(struct ddl_client_context *ddl,
 			DDLCLIENT_STATE_IS(ddl, DDL_CLIENT_OPEN)) {
 				decoder->cont_mode = *(u32 *)property_value;
 				vcd_status = VCD_S_SUCCESS;
+		}
+	}
+	break;
+	case VCD_I_DVB_CONT_MODE:
+	{
+		DDL_MSG_LOW("Set property VCD_I_DVB_CONT_MODE\n");
+		if (decoder->cont_mode) {
+			if (sizeof(u32) == property_hdr->sz &&
+			DDLCLIENT_STATE_IS(ddl, DDL_CLIENT_OPEN)) {
+				decoder->dvb_cont_mode = *(u32 *)property_value;
+				vcd_status = VCD_S_SUCCESS;
+			}
 		}
 	}
 	break;
@@ -2288,7 +2300,7 @@ u32 ddl_set_default_decoder_buffer_req(struct ddl_decoder_data *decoder,
 	if (estimate) {
 		if (decoder->cont_mode &&
 			decoder->codec.codec == VCD_CODEC_H264) {
-			min_dpb = res_trk_get_min_dpb_count();
+			min_dpb = res_trk_get_min_dpb_count(decoder);
 			min_dpb_from_res_trk = 1;
 		} else
 			min_dpb = ddl_decoder_min_num_dpb(decoder);
@@ -2306,7 +2318,7 @@ u32 ddl_set_default_decoder_buffer_req(struct ddl_decoder_data *decoder,
 		min_dpb = decoder->min_dpb_num;
 		if (decoder->cont_mode &&
 			decoder->codec.codec == VCD_CODEC_H264) {
-			min_dpb = res_trk_get_min_dpb_count();
+			min_dpb = res_trk_get_min_dpb_count(decoder);
 			min_dpb_from_res_trk = 1;
 			if (min_dpb < decoder->min_dpb_num) {
 				DDL_MSG_INFO("Warning: cont_mode dpb count"\

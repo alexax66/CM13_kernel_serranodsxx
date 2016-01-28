@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2012, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -23,9 +23,15 @@
 #include <linux/compiler.h>
 #include <linux/ratelimit.h>
 
-#include <mach/sps.h>
+#include <linux/msm-sps.h>
 
 #include "sps_map.h"
+
+#ifdef CONFIG_ARM_LPAE
+#define SPS_LPAE (true)
+#else
+#define SPS_LPAE (false)
+#endif
 
 #define BAM_MAX_PIPES              31
 #define BAM_MAX_P_LOCK_GROUP_NUM   31
@@ -35,12 +41,19 @@
 #define SPS_ERROR -1
 
 /* BAM identifier used in log messages */
-#define BAM_ID(dev)       ((dev)->props.phys_addr)
+#define BAM_ID(dev)       (&(dev)->props.phys_addr)
 
 /* "Clear" value for the connection parameter struct */
-#define SPSRM_CLEAR     0xcccccccc
+#define SPSRM_CLEAR     0xccccccccUL
+#define SPSRM_ADDR_CLR \
+	((sizeof(int) == sizeof(long)) ? 0 : (SPSRM_CLEAR << 32))
+
+#define MAX_MSG_LEN 80
 
 extern u32 d_type;
+extern bool enhd_pipe;
+extern bool imem;
+extern enum sps_bam_type bam_type;
 
 #ifdef CONFIG_DEBUG_FS
 extern u8 debugfs_record_enabled;
@@ -48,25 +61,28 @@ extern u8 logging_option;
 extern u8 debug_level_option;
 extern u8 print_limit_option;
 
-#define MAX_MSG_LEN 80
 #define SPS_DEBUGFS(msg, args...) do {					\
 		char buf[MAX_MSG_LEN];		\
 		snprintf(buf, MAX_MSG_LEN, msg"\n", ##args);	\
 		sps_debugfs_record(buf);	\
 	} while (0)
 #define SPS_ERR(msg, args...) do {					\
-		if (unlikely(print_limit_option > 2))	\
-			pr_err_ratelimited(msg, ##args);	\
-		else	\
-			pr_err(msg, ##args);	\
+		if (logging_option != 1) {	\
+			if (unlikely(print_limit_option > 2))	\
+				pr_err_ratelimited(msg, ##args);	\
+			else	\
+				pr_err(msg, ##args);	\
+		}	\
 		if (unlikely(debugfs_record_enabled))	\
 			SPS_DEBUGFS(msg, ##args);	\
 	} while (0)
 #define SPS_INFO(msg, args...) do {					\
-		if (unlikely(print_limit_option > 1))	\
-			pr_info_ratelimited(msg, ##args);	\
-		else	\
-			pr_info(msg, ##args);	\
+		if (logging_option != 1) {	\
+			if (unlikely(print_limit_option > 1))	\
+				pr_info_ratelimited(msg, ##args);	\
+			else	\
+				pr_info(msg, ##args);	\
+		}	\
 		if (unlikely(debugfs_record_enabled))	\
 			SPS_DEBUGFS(msg, ##args);	\
 	} while (0)
@@ -129,8 +145,8 @@ extern u8 print_limit_option;
 
 /* End point parameters */
 struct sps_conn_end_pt {
-	u32 dev;		/* Device handle of BAM */
-	u32 bam_phys;		/* Physical address of BAM. */
+	unsigned long dev;		/* Device handle of BAM */
+	phys_addr_t bam_phys;		/* Physical address of BAM. */
 	u32 pipe_index;		/* Pipe index */
 	u32 event_threshold;	/* Pipe event threshold */
 	u32 lock_group;	/* The lock group this pipe belongs to */
@@ -160,8 +176,9 @@ struct sps_connection {
 	/* Dynamically allocated resouces, if required */
 	u32 alloc_src_pipe;	/* Source pipe index */
 	u32 alloc_dest_pipe;	/* Destination pipe index */
-	u32 alloc_desc_base;	/* Physical address of descriptor FIFO */
-	u32 alloc_data_base;	/* Physical address of data FIFO */
+	/* Physical address of descriptor FIFO */
+	phys_addr_t alloc_desc_base;
+	phys_addr_t alloc_data_base;	/* Physical address of data FIFO */
 };
 
 /* Event bookkeeping descriptor struct */
@@ -180,6 +197,12 @@ struct sps_mem_stats {
 	u32 max_bytes_used;
 };
 
+enum sps_bam_type {
+	SPS_BAM_LEGACY,
+	SPS_BAM_NDP,
+	SPS_BAM_NDP_4K
+};
+
 #ifdef CONFIG_DEBUG_FS
 /* record debug info for debugfs */
 void sps_debugfs_record(const char *);
@@ -192,7 +215,7 @@ void print_bam_reg(void *);
 void print_bam_pipe_reg(void *, u32);
 
 /* output the content of selected BAM-level registers */
-void print_bam_selected_reg(void *);
+void print_bam_selected_reg(void *, u32);
 
 /* output the content of selected BAM pipe registers */
 void print_bam_pipe_selected_reg(void *, u32);
@@ -202,6 +225,9 @@ void print_bam_pipe_desc_fifo(void *, u32, u32);
 
 /* output BAM_TEST_BUS_REG */
 void print_bam_test_bus_reg(void *, u32);
+
+/* halt and un-halt a pipe */
+void bam_pipe_halt(void *, u32, bool);
 
 /**
  * Translate physical to virtual address
@@ -213,7 +239,7 @@ void print_bam_test_bus_reg(void *, u32);
  * @return virtual memory pointer
  *
  */
-void *spsi_get_mem_ptr(u32 phys_addr);
+void *spsi_get_mem_ptr(phys_addr_t phys_addr);
 
 /**
  * Allocate I/O (pipe) memory
@@ -224,7 +250,7 @@ void *spsi_get_mem_ptr(u32 phys_addr);
  *
  * @return physical address of allocated memory, or SPS_ADDR_INVALID on error
  */
-u32 sps_mem_alloc_io(u32 bytes);
+phys_addr_t sps_mem_alloc_io(u32 bytes);
 
 /**
  * Free I/O (pipe) memory
@@ -235,7 +261,7 @@ u32 sps_mem_alloc_io(u32 bytes);
  *
  * @bytes - number of bytes to free.
  */
-void sps_mem_free_io(u32 phys_addr, u32 bytes);
+void sps_mem_free_io(phys_addr_t phys_addr, u32 bytes);
 
 /**
  * Find matching connection mapping
@@ -319,7 +345,7 @@ int sps_dma_pipe_free(void *bam, u32 pipe_index);
  * @return 0 on success, negative value on error
  *
  */
-int sps_mem_init(u32 pipemem_phys_base, u32 pipemem_size);
+int sps_mem_init(phys_addr_t pipemem_phys_base, u32 pipemem_size);
 
 /**
  * De-initialize driver memory module
@@ -361,7 +387,7 @@ void sps_dma_de_init(void);
  * @return 0 on success, negative value on error
  *
  */
-int sps_dma_device_init(u32 h);
+int sps_dma_device_init(unsigned long h);
 
 /**
  * De-initialize BAM DMA device
@@ -373,7 +399,7 @@ int sps_dma_device_init(u32 h);
  * @return 0 on success, negative value on error
  *
  */
-int sps_dma_device_de_init(u32 h);
+int sps_dma_device_de_init(unsigned long h);
 
 /**
  * Initialize connection mapping module
@@ -398,4 +424,12 @@ int sps_map_init(const struct sps_map *map_props, u32 options);
  */
 void sps_map_de_init(void);
 
+/*
+ * bam_pipe_reset - reset a BAM pipe.
+ * @base:	BAM virtual address
+ * @pipe:	pipe index
+ *
+ * This function resets a BAM pipe.
+ */
+void bam_pipe_reset(void *base, u32 pipe);
 #endif	/* _SPSI_H_ */

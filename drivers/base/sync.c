@@ -79,12 +79,12 @@ static void sync_timeline_free(struct kref *kref)
 		container_of(kref, struct sync_timeline, kref);
 	unsigned long flags;
 
-	if (obj->ops->release_obj)
-		obj->ops->release_obj(obj);
-
 	spin_lock_irqsave(&sync_timeline_list_lock, flags);
 	list_del(&obj->sync_timeline_list);
 	spin_unlock_irqrestore(&sync_timeline_list_lock, flags);
+
+	if (obj->ops->release_obj)
+		obj->ops->release_obj(obj);
 
 	kfree(obj);
 }
@@ -261,7 +261,7 @@ static struct sync_fence *sync_fence_alloc(const char *name)
 
 	fence->file = anon_inode_getfile("sync_fence", &sync_fence_fops,
 					 fence, 0);
-	if (fence->file == NULL)
+	if (IS_ERR(fence->file))
 		goto err;
 
 	kref_init(&fence->kref);

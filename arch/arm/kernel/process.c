@@ -14,6 +14,7 @@
 #include <linux/sched.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
+#include <linux/vmalloc.h>
 #include <linux/stddef.h>
 #include <linux/unistd.h>
 #include <linux/user.h>
@@ -232,10 +233,12 @@ void (*arm_pm_idle)(void) = arch_idle;
 
 static void default_idle(void)
 {
-	if (arm_pm_idle)
-		arm_pm_idle();
-	else
-		cpu_do_idle();
+	if (!need_resched()) {
+		if (arm_pm_idle)
+			arm_pm_idle();
+		else
+			cpu_do_idle();
+	}
 	local_irq_enable();
 }
 
@@ -303,9 +306,17 @@ int __init reboot_setup(char *str)
 
 __setup("reboot=", reboot_setup);
 
+/*
+ * Called by kexec, immediately prior to machine_kexec().
+ *
+ * This must completely disable all secondary CPUs; simply causing those CPUs
+ * to execute e.g. a RAM-based pin loop is not sufficient. This allows the
+ * kexec'd kernel to use any and all RAM as it sees fit, without having to
+ * avoid any code or data used by any SW CPU pin loop. The CPU hotplug
+ * functionality embodied in disable_nonboot_cpus() to achieve this.
+ */
 void machine_shutdown(void)
 {
-	preempt_disable();
 #ifdef CONFIG_SMP
 	/*
 	 * Disable preemption so we're guaranteed to
@@ -315,27 +326,47 @@ void machine_shutdown(void)
 	 * one of the stopped CPUs.
 	 */
 	preempt_disable();
-
-	smp_send_stop();
 #endif
+	disable_nonboot_cpus();
 }
 
 void machine_halt(void)
 {
-	machine_shutdown();
+	preempt_disable();
+	smp_send_stop();
+
+	local_irq_disable();
 	while (1);
 }
 
+/*
+ * Power-off simply requires that the secondary CPUs stop performing any
+ * activity (executing tasks, handling interrupts). smp_send_stop()
+ * achieves this. When the system power is turned off, it will take all CPUs
+ * with it.
+ */
 void machine_power_off(void)
 {
-	machine_shutdown();
+	smp_send_stop();
+
 	if (pm_power_off)
 		pm_power_off();
 }
 
+/*
+ * Restart requires that the secondary CPUs stop performing any activity
+ * while the primary CPU resets the system. Systems with a single CPU can
+ * use soft_restart() as their machine descriptor's .restart hook, since that
+ * will cause the only available CPU to reset. Systems with multiple CPUs must
+ * provide a HW restart implementation, to ensure that all CPUs reset at once.
+ * This is required so that any code running after reset on the primary CPU
+ * doesn't have to co-ordinate with other CPUs to ensure they aren't still
+ * executing pre-reset code, and using RAM that the primary CPU's code wishes
+ * to use. Implementing such co-ordination would be essentially impossible.
+ */
 void machine_restart(char *cmd)
 {
-	machine_shutdown();
+	smp_send_stop();
 
 	/* Flush the console to make sure all the relevant messages make it
 	 * out to the console drivers */
@@ -348,6 +379,7 @@ void machine_restart(char *cmd)
 
 	/* Whoops - the platform was unable to reboot. Tell the user! */
 	printk("Reboot failed -- System halted\n");
+	local_irq_disable();
 	while (1);
 }
 
@@ -359,6 +391,7 @@ static void show_data(unsigned long addr, int nbytes, const char *name)
 	int	i, j;
 	int	nlines;
 	u32	*p;
+	bool	is_cma = 0;
 
 	/*
 	 * don't attempt to dump non-kernel addresses or
@@ -386,12 +419,25 @@ static void show_data(unsigned long addr, int nbytes, const char *name)
 		printk("%04lx ", (unsigned long)p & 0xffff);
 		for (j = 0; j < 8; j++) {
 			u32	data;
-			if (probe_kernel_address(p, data)) {
-				printk(" ********");
-			} else {
-				printk(" %08x", data);
+			/*
+			 * vmalloc addresses may point to
+			 * memory-mapped peripherals. CMA
+			 * addresses may be locked down.
+			 */
+			if (virt_addr_valid(p) &&
+				pfn_valid(__pa(p) >> PAGE_SHIFT)) {
+
+				is_cma = is_cma_pageblock(virt_to_page(p));
+				if (is_cma || probe_kernel_address(p, data)) {
+					printk(" ********");
+				} else {
+					printk(" %08x", data);
+				}
+				++p;
 			}
-			++p;
+			else {
+				printk(" ********");
+			}
 		}
 		printk("\n");
 	}
@@ -433,11 +479,8 @@ void __show_regs(struct pt_regs *regs)
 #endif
 	set_crash_store_enable();
 #endif
-	printk("CPU: %d    %s  (%s %.*s)\n",
-		raw_smp_processor_id(), print_tainted(),
-		init_utsname()->release,
-		(int)strcspn(init_utsname()->version, " "),
-		init_utsname()->version);
+	show_regs_print_info(KERN_DEFAULT);
+
 	print_symbol("PC is at %s\n", instruction_pointer(regs));
 	print_symbol("LR is at %s\n", regs->ARM_lr);
 #ifdef CONFIG_LGE_CRASH_HANDLER
@@ -508,7 +551,6 @@ void __show_regs(struct pt_regs *regs)
 void show_regs(struct pt_regs * regs)
 {
 	printk("\n");
-	printk("Pid: %d, comm: %20s\n", task_pid_nr(current), current->comm);
 	__show_regs(regs);
 	dump_stack();
 }
@@ -654,6 +696,7 @@ EXPORT_SYMBOL(kernel_thread);
 unsigned long get_wchan(struct task_struct *p)
 {
 	struct stackframe frame;
+	unsigned long stack_page;
 	int count = 0;
 	if (!p || p == current || p->state == TASK_RUNNING)
 		return 0;
@@ -662,9 +705,11 @@ unsigned long get_wchan(struct task_struct *p)
 	frame.sp = thread_saved_sp(p);
 	frame.lr = 0;			/* recovered from the stack */
 	frame.pc = thread_saved_pc(p);
+	stack_page = (unsigned long)task_stack_page(p);
 	do {
-		int ret = unwind_frame(&frame);
-		if (ret < 0)
+		if (frame.sp < stack_page ||
+		    frame.sp >= stack_page + THREAD_SIZE ||
+		    unwind_frame(&frame) < 0)
 			return 0;
 		if (!in_sched_functions(frame.pc))
 			return frame.pc;
@@ -684,15 +729,16 @@ unsigned long arch_randomize_brk(struct mm_struct *mm)
  * atomic helpers and the signal restart code. Insert it into the
  * gate_vma so that it is visible through ptrace and /proc/<pid>/mem.
  */
-static struct vm_area_struct gate_vma;
+static struct vm_area_struct gate_vma = {
+	.vm_start	= 0xffff0000,
+	.vm_end		= 0xffff0000 + PAGE_SIZE,
+	.vm_flags	= VM_READ | VM_EXEC | VM_MAYREAD | VM_MAYEXEC,
+	.vm_mm		= &init_mm,
+};
 
 static int __init gate_vma_init(void)
 {
-	gate_vma.vm_start	= 0xffff0000;
-	gate_vma.vm_end		= 0xffff0000 + PAGE_SIZE;
-	gate_vma.vm_page_prot	= PAGE_READONLY_EXEC;
-	gate_vma.vm_flags	= VM_READ | VM_EXEC |
-				  VM_MAYREAD | VM_MAYEXEC;
+	gate_vma.vm_page_prot = PAGE_READONLY_EXEC;
 	return 0;
 }
 arch_initcall(gate_vma_init);

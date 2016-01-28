@@ -18,6 +18,7 @@
 #include <linux/percpu.h>
 #include <linux/profile.h>
 #include <linux/sched.h>
+#include <linux/module.h>
 
 #include "tick-internal.h"
 
@@ -70,11 +71,23 @@ int tick_check_broadcast_device(struct clock_event_device *dev)
 	     tick_broadcast_device.evtdev->rating >= dev->rating) ||
 	     (dev->features & CLOCK_EVT_FEAT_C3STOP))
 		return 0;
+	if (!try_module_get(dev->owner))
+		return 0;
 
 	clockevents_exchange_device(tick_broadcast_device.evtdev, dev);
 	tick_broadcast_device.evtdev = dev;
 	if (!cpumask_empty(tick_get_broadcast_mask()))
 		tick_broadcast_start_periodic(dev);
+	/*
+	 * Inform all cpus about this. We might be in a situation
+	 * where we did not switch to oneshot mode because the per cpu
+	 * devices are affected by CLOCK_EVT_FEAT_C3STOP and the lack
+	 * of a oneshot capable broadcast device. Without that
+	 * notification the systems stays stuck in periodic mode
+	 * forever.
+	 
+	if (dev->features & CLOCK_EVT_FEAT_ONESHOT)
+		tick_clock_notify(); */
 	return 1;
 }
 

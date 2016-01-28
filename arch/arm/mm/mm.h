@@ -55,6 +55,9 @@ extern void __flush_dcache_page(struct address_space *mapping, struct page *page
 /* permanent static mappings from iotable_init() */
 #define VM_ARM_STATIC_MAPPING	0x40000000
 
+/* empty mapping */
+#define VM_ARM_EMPTY_MAPPING	0x20000000
+
 /* mapping type (attributes) for permanent static mappings */
 #define VM_ARM_MTYPE(mt)		((mt) << 20)
 #define VM_ARM_MTYPE_MASK	(0x1f << 20)
@@ -62,7 +65,7 @@ extern void __flush_dcache_page(struct address_space *mapping, struct page *page
 #endif
 
 #ifdef CONFIG_ZONE_DMA
-extern u32 arm_dma_limit;
+extern phys_addr_t arm_dma_limit;
 #else
 #define arm_dma_limit ((u32)~0)
 #endif

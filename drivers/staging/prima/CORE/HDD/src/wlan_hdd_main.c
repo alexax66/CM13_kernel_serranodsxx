@@ -74,6 +74,7 @@
   Include Files
   ------------------------------------------------------------------------*/
 //#include <wlan_qct_driver.h>
+#include <linux/platform_device.h>
 #include <wlan_hdd_includes.h>
 #include <vos_api.h>
 #include <vos_sched.h>
@@ -130,7 +131,7 @@ int wlan_hdd_ftm_start(hdd_context_t *pAdapter);
 #ifdef MODULE
 #define WLAN_MODULE_NAME  module_name(THIS_MODULE)
 #else
-#define WLAN_MODULE_NAME  "wlan"
+#define WLAN_MODULE_NAME  "prima_wlan"
 #endif
 
 #ifdef TIMER_MANAGER
@@ -6647,6 +6648,30 @@ static int __init hdd_module_init ( void)
 }
 #endif /* #ifdef MODULE */
 
+#if defined(CONFIG_PRIMA_WLAN) && !defined(CONFIG_PRIMA_WLAN_MODULE)
+static int
+wcnss_ready_probe(struct platform_device *pdev)
+{
+   return hdd_module_init();
+}
+
+static struct platform_driver wcnss_ready = {
+   .driver = {
+      .name = "wcnss_ready",
+      .owner = THIS_MODULE,
+   },
+   .probe = wcnss_ready_probe,
+};
+#endif
+
+static int __init hdd_module_init_first(void)
+{
+#if defined(CONFIG_PRIMA_WLAN) && !defined(CONFIG_PRIMA_WLAN_MODULE)
+   return platform_driver_register(&wcnss_ready);
+#else
+   return hdd_module_init();
+#endif
+}
 
 /**---------------------------------------------------------------------------
 
@@ -7264,29 +7289,45 @@ int wlan_hdd_scan_abort(hdd_adapter_t *pAdapter)
     hdd_context_t *pHddCtx = WLAN_HDD_GET_CTX(pAdapter);
     hdd_scaninfo_t *pScanInfo = NULL;
     long status = 0;
+    tSirAbortScanStatus abortScanStatus;
 
     pScanInfo = &pHddCtx->scan_info;
     if (pScanInfo->mScanPending)
     {
-        INIT_COMPLETION(pScanInfo->abortscan_event_var);
-        hdd_abort_mac_scan(pHddCtx, eCSR_SCAN_ABORT_DEFAULT);
+        abortScanStatus = hdd_abort_mac_scan(pHddCtx, eCSR_SCAN_ABORT_DEFAULT);
+        VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_INFO,
+                  FL("abortScanStatus: %d"), abortScanStatus);
 
-        status = wait_for_completion_interruptible_timeout(
+        /* If there is active scan command lets wait for the completion else
+         * there is no need to wait as scan command might be in the SME pending
+         * command list.
+         */
+        if (abortScanStatus == eSIR_ABORT_ACTIVE_SCAN_LIST_NOT_EMPTY)
+        {
+            INIT_COMPLETION(pScanInfo->abortscan_event_var);
+            status = wait_for_completion_interruptible_timeout(
                            &pScanInfo->abortscan_event_var,
                            msecs_to_jiffies(5000));
-        if (0 >= status)
-        {
-           VOS_TRACE( VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_ERROR,
+            if (0 >= status)
+            {
+               VOS_TRACE( VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_ERROR,
                   "%s: Timeout or Interrupt occurred while waiting for abort"
                   "scan, status- %ld", __func__, status);
-            return -ETIMEDOUT;
+                return -ETIMEDOUT;
+            }
+        }
+        else if (abortScanStatus == eSIR_ABORT_SCAN_FAILURE)
+        {
+            VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_ERROR,
+                      FL("hdd_abort_mac_scan failed"));
+            return -VOS_STATUS_E_FAILURE;
         }
     }
     return 0;
 }
 
 //Register the module init/exit functions
-module_init(hdd_module_init);
+module_init(hdd_module_init_first);
 module_exit(hdd_module_exit);
 
 MODULE_LICENSE("Dual BSD/GPL");

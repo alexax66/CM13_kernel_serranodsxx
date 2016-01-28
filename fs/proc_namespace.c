@@ -17,18 +17,18 @@
 
 static unsigned mounts_poll(struct file *file, poll_table *wait)
 {
-	struct proc_mounts *p = proc_mounts(file->private_data);
+	struct proc_mounts *p = file->private_data;
 	struct mnt_namespace *ns = p->ns;
 	unsigned res = POLLIN | POLLRDNORM;
 
 	poll_wait(file, &p->ns->poll, wait);
 
-	br_read_lock(&vfsmount_lock);
+	br_read_lock(vfsmount_lock);
 	if (p->m.poll_event != ns->event) {
 		p->m.poll_event = ns->event;
 		res |= POLLERR | POLLPRI;
 	}
-	br_read_unlock(&vfsmount_lock);
+	br_read_unlock(vfsmount_lock);
 
 	return res;
 }
@@ -44,6 +44,7 @@ static int show_sb_opts(struct seq_file *m, struct super_block *sb)
 		{ MS_SYNCHRONOUS, ",sync" },
 		{ MS_DIRSYNC, ",dirsync" },
 		{ MS_MANDLOCK, ",mand" },
+		{ MS_LAZYTIME, ",lazytime" },
 		{ 0, NULL }
 	};
 	const struct proc_fs_info *fs_infop;
@@ -121,7 +122,7 @@ out:
 
 static int show_mountinfo(struct seq_file *m, struct vfsmount *mnt)
 {
-	struct proc_mounts *p = proc_mounts(m);
+	struct proc_mounts *p = m->private;
 	struct mount *r = real_mount(mnt);
 	struct super_block *sb = mnt->mnt_sb;
 	struct path mnt_path = { .dentry = mnt->mnt_root, .mnt = mnt };
@@ -268,6 +269,7 @@ static int mounts_open_common(struct inode *inode, struct file *file,
 	if (ret)
 		goto err_free;
 
+	p->m.private = p;
 	p->ns = ns;
 	p->root = root;
 	p->m.poll_event = ns->event;
@@ -287,7 +289,7 @@ static int mounts_open_common(struct inode *inode, struct file *file,
 
 static int mounts_release(struct inode *inode, struct file *file)
 {
-	struct proc_mounts *p = proc_mounts(file->private_data);
+	struct proc_mounts *p = file->private_data;
 	path_put(&p->root);
 	put_mnt_ns(p->ns);
 	return seq_release(inode, file);

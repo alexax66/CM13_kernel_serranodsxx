@@ -1,0 +1,95 @@
+CM12.1-ALX-0.2.7-pws
+PM / Sleep: Add user space interface for manipulating wakeup sources, v3 - https://github.com/ion-storm/Unleashed-N4/commit/c4607e7a54b82a9afc9ab5d14bd0a1451aa46c47
+PM: Introduce suspend state PM_SUSPEND_FREEZE, fix some compiling errors - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/d4b5e7e6add2c5aba70758df39714136880c818e
+kernel/power/powersuspend: new PM kernel driver for Android w/o early_suspend v1.7 (faux123/Yank555.lu) - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/f0fd73d9e2eac351d2728354acdb7bb38dbb2e18
+powersuspend: blank space cleanup - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/8b23aac17589dff495e4fcf342f4d6504753febc - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/8b23aac17589dff495e4fcf342f4d6504753febc
+QoS: add back comments - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/49f64bfd6e99685538d0fb6d895e61647bfcd780
+[PATCH 3.13 085/162] OOM, PM: OOM killed task shouldn't escape PM suspend - https://lists.ubuntu.com/archives/kernel-team/2014-November/049417.html
+PM / sleep: Add state field to pm_states[] entries - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/a6232a2e3793183cc37a7d71e5a52d4c456e5cbe
+PM / sleep: Use valid_state() for platform-dependent sleep states only - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/4c496b80026831dcb41c34fe9e38c3902a658dc7
+PM / Sleep: Clean up remnants of workqueue-based sync - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/457109e78d905259ccf40b1a6a31d0848e99d21a
+PM / sleep: add TEST_PLATFORM support for freeze state - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/d91cd34d56c42f4f27ab253a51c9c63cd5142556
+PM / wakeup: Adjust messaging for wake events during suspend - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/e603333e4e46a4a01a0c21888a28a5714393907a
+PM / Sleep: increase ftrace coverage in suspend/resume - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/fdea3887415bd47b2b7b108a0a01a20fd64fdbd7
+PM / suspend: Remove unnecessary !! - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/6d9eb27d595c90161ff5c74bde03f0ea977b0879
+ACPI / PM: Hold ACPI scan lock over the "freeze" sleep state - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/81a320186ac90372c29bc0b13d269552637a10c6
+PM / Sleep: Remove ftrace_stop/start() from suspend and hibernate - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/7323d6236f7b2d44aea6032ef3c80e82d9cc3dbc
+power: make sync on suspend optional - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/fdb06443ef062d4d9dcdb66a28825b06dc79cf05
+Reverted all WAKEUP SOURCES LOGGING CODE. we get NULL pointer from ktime_get - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/0d0249ddb97c2b82f4b95e50ef8b90d7920b0500
+Revert "Revert all commits I made in the last two days. Mainly because of incompatible stuff. Maybe I will revert this commit here in the feature" - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/a4fa2037a8f13cb2c6262e58ec46600ed8c5d7d8
+suspend: Return error when pending wakeup source is found. - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/5d98e2b5dae9b2461e454e8c51ffdacfd8636e4b
+PM / Sleep: Remove ftrace_stop/start() from suspend and hibernate - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/2aa69a57bb76bf043ea2c6d5e353917752fb1a18
+PM / cpuidle: System resume hang fix with cpuidle - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/26409a74a7b44bd4bfd188a43c79516bc8c9787e
+PM / Sleep: Add wakeup_source_activate and wakeup_source_deactivate tracepoints - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/9e007dbd18b3caaf436edf2afe5de06e2f3d4b21
+fs/dyn_sync_cntrl: dynamic sync control v1.5 (faux123) - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/e04040a020e100998d7d5478866c01d85dc0dac1
+PM / Domains: Use subsystem runtime suspend/resume callbacks by default - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/ebb0bc870e1b42948c6331d26fa40bed61f98ad8
+PM / sleep: unregister wakeup source when disabling device wakeup - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/02fab304134b4cf4726eb8c60dca87af6f10be05
+PM: Fix a bug in dpm_suspend_late() - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/458c87704c9ecdfb6ca3774092152dce6f92c88a
+power: catch wake-up requests in suspend_again - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/d71fac9bb6b1a0505ac910e52e1a17d710b4ab84
+drivercore: Avoid adding devices without pm_ops to dpm list - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/8ec8698521c75146ef60b658dbbe7731d19b6c9f
+PM / Sleep: Fix build warning in sysfs.c for CONFIG_PM_SLEEP unset - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/ba96d3ace714312f9a9222964fe36f6e47ce4e59
+CONFIG_QUICK_WAKEUP: Implemented module call in the proper way, then …enabled it! It was my mistake :) - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/4163091975c131bc9ac67f95cdf539e401e87360
+add msm_fb to powersuspend - https://github.com/ion-storm/Unleashed-N4/commit/cd5eeddf4094b06079e6000bb5ce8a658689a5a6
+powersuspend/lcd_notify: moved hooking functions from mipi_lgit into msm_fb. - https://github.com/ion-storm/Unleashed-N4/commit/72021559923cad94be3033983ca4cae4cc7f8b38
+add logger, wlan & more support for powersuspend - https://github.com/ion-storm/Unleashed-N4/commit/c43c371941cf7b67a11a6e05d81fa7226d59db94
+Starting renaming early_suspend to power_suspend. - https://github.com/ion-storm/Unleashed-N4/commit/75a7ca9aa420428549bfe347be9c5eb9391b0b17
+Replaced early_suspend with new power_suspend. (It works) - https://github.com/ion-storm/Unleashed-N4/commit/76634d95f45ab39d18c9f13054101cec63206df9
+even more mass renaming of drivers/* from early_suspend to power_suspend - https://github.com/ion-storm/Unleashed-N4/commit/b837b411b5e77aeac1e6975b59cfae22ecfff1ca
+clockchips: Add FEAT_PERCPU clockevent flag - https://github.com/nikhil18/android_kernel_sony_apq8064/commit/e38d663d1551e7be62f556755baf7072b6ebaa3c
+tick: Introduce hrtimer based broadcast - https://github.com/nikhil18/android_kernel_sony_apq8064/commit/4656df7b8fbf361ec96969deb797719c6920e354
+tick: Fixup more fallout from hrtimer broadcast mode - https://github.com/nikhil18/android_kernel_sony_apq8064/commit/537e88aa5526fd44a3c2ff14081df5c1eed85f25
+cpufreq: intelliminmax: Tune it further - https://github.com/ion-storm/Unleashed-N4/commit/03f01eac2cc8ceab0058f3d2e2935ab0330ec0ae
+Introduce Lazyplug - https://github.com/YoshiShaPow/android_kernel_oneplus_msm8974/commit/7a882b378eccf279e956a64ae9d3189ed8841396
+Use Lazyplug instead Intelliplug - my commit 
+lazyplug: add mutex & boolean check for lazy mode - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/7c5b2ea4b78f5ff5c2b8c5bd298139dd7d00bb96
+lazyplug: separate thread for reducing wake-up delay - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/2dc6efb96fa29a375cc857943ab9e7973bb2b1d9
+lazyplug: rename the function to wakeup_boost_lazy - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/8058dcd69e0377d52b45fb3045e0796a9654e9a2
+cpufreq: cpu-boost: Introduce scheduler assisted load based syncs - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/1931fca866ba51724c249b3903131320766d171c
+cpufreq: cpu-boost: Upgrade to enhanced version - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/b7ddfdefb1d29c77436fe0a21c96fc4e037495c0
+[PATCH] PM / suspend: Make cpuidle work in the "freeze" state - http://www.gossamer-threads.com/lists/linux/kernel/1906979
+[revert] cpufreq: cpu-boost: Introduce scheduler assisted load based syncs - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/1931fca866ba51724c249b3903131320766d171c
+upgrade bricked-hotlug - https://github.com/Tkkg1994/Hulk-Kernel-V2/blob/88dafc22fbea15422dc702dad917385e78fe8cea/arch/arm/mach-msm/bricked_hotplug.c
+defconfig: enable  bricked-hotlug
+msm_rq_stats.c: add get_rq_info() neded for bricked-hotlug -msm_rq_stats - https://github.com/alexax66/KitKat_kernel_samsung_msm8930-common/commit/6c9f349de868a60e4e8f610953c2b8541386a318
+mach-msm: Makefile: enable msm_rq_stats - https://github.com/alexax66/CM12.1_kernel_serranodsxx/commit/2e716f7af7cf184ea74a4831375a837d6276d513
+defconfig: Desable bricked-hotlug and enable fluxi-hotlug
+revert remove __cpuinit (see ALX-pws-3-bad)
+Alucard Hotplug by @Alucard24 - https://github.com/zakee94/halogen_reloaded/commit/402f12fe768389cff712a3983d308f8d545c3283
+Try Update Again - https://github.com/zakee94/halogen_reloaded/commit/cb729066b7a9ea37f8d2ed90ce20b0b7a62acaa5
+Alucard Hotplug: Adaptation for MSM8930
+Add Alucard Governor - https://github.com/zakee94/halogen_reloaded/commit/744233e8ebf39f2b9f65ecbe58562edfb0829377
+Enable Alucard Gov  - https://github.com/zakee94/halogen_reloaded/commit/81a1a049321570520087008b68ef671a8e7ffc60
+defconfig: Enable Lazy-hotplug
+PM: wakeup_reason: add functions to query and clear wakeup reasons - https://github.com/UBERMALLOW/kernel_lge_hammerhead/commit/be89f4bb2a6bc238d299e73cbf69a26d23bfa31e
+PM: wakeup_reason: add functionality to log the last suspend-abort reason. - https://github.com/UBERMALLOW/kernel_lge_hammerhead/commit/0384bf78df13796bbe7d190d0ed1df4bb458e4f1
+PM: wakeup_reason: add check_wakeup_reason() to verify wakeup source irq - https://github.com/UBERMALLOW/kernel_lge_hammerhead/commit/9435b9b8b1578f00fe2e8a87f091ed82698dfa25
+PM: wakeup_reason: correctly deduce wakeup interrupts - https://github.com/UBERMALLOW/kernel_lge_hammerhead/commit/525cdb0e2ac3f0d19b108a1adbb7026fcd0b19d7
+POWER: Add an API call to log wake wakeup reason - https://github.com/UBERMALLOW/kernel_lge_hammerhead/commit/3211f80e5292d2661a011133c848b3bec1e0e0c9
+PM: wakeup_reason: correctly deduce wakeup interrupts - https://github.com/UBERMALLOW/kernel_lge_hammerhead/commit/525cdb0e2ac3f0d19b108a1adbb7026fcd0b19d7
+Power: Report total suspend times from boot in suspend_since_boot - https://github.com/UBERMALLOW/kernel_lge_hammerhead/commit/007f493a17243d190541f56c585e75381cfb1147
+PM: wakeup_reasons: fix race condition - https://github.com/UBERMALLOW/kernel_lge_hammerhead/commit/f1ae755d80653719d81152bb2aa63fa4d51f73b9
+PM: Replace WARN_ON on timeout with one line print - https://github.com/UBERMALLOW/kernel_lge_hammerhead/commit/b56e13982b6f46aac876129092e3435c82598dc5
+power: add partial-resume framework - https://github.com/UBERMALLOW/kernel_lge_hammerhead/commit/559e28df451c17efa841ce23880e09aa8cc4dfb5
+PM: wakeup_reasons: disable wakeup-reason deduction by default - https://github.com/UBERMALLOW/kernel_lge_hammerhead/commit/1078bcc53395afb888fb99e37e9062757a316aef
+Power: Add wakeup reasons counters from boot in suspend_since_boot - https://github.com/UBERMALLOW/kernel_lge_hammerhead/commit/f4746e5c1620138cd5106d7edc1685a752bc5645
+wakeup_reason: use vsnprintf instead of snprintf for vargs. - https://github.com/UBERMALLOW/kernel_lge_hammerhead/commit/9f27dc0fbcf0291095d4e0792588f3cee33000b7
+doubletap2wake: back to full screen, make a bit more sensitive - https://github.com/Cl3Kener/UBER-L/commit/5fa20913bb55d5d4012469508132783c107363dc
+[doubletap2wake]: fullscreen option - https://github.com/Cl3Kener/UBER-L/commit/6589c2bc1ae71f48107b00f978ccb23c470e2cd5
+DT2W: Add Missing Include - https://github.com/Cl3Kener/UBER-L/commit/c63809a6c27fe8859001ce5f7e26ddff4956e4e9
+wake_timeout: disable s2w/dt2w after timeout - https://github.com/Cl3Kener/UBER-L/commit/37180315b16934af8b4924ecc61446bae367018b
+revert: wake_timeout: disable s2w/dt2w after timeout - https://github.com/Cl3Kener/UBER-L/commit/37180315b16934af8b4924ecc61446bae367018b
+CPU HOTPLUGS: convert all to use state notifier suspend. - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/88dafc22fbea15422dc702dad917385e78fe8cea
+msm_rq_stats.c++ - msm: rq_stats: Disable hotplug and stats by default - https://github.com/Tkkg1994/Hulk-Kernel-V2/commit/cf282a544f69eaf66f884375f28fe6cfcc76fdf2
+SWEEP2SLEEP: remove power suspend. and use direct signal from MDSS. - https://github.com/dorimanx/DORIMANX_LG_STOCK_LP_KERNEL/commit/f2831bb575e18e26890971b9f69b2800fb253caa
+[no commited] POWERSUSPEND: update to v1.7 cleanups and update adreno idler. - https://github.com/dorimanx/DORIMANX_LG_STOCK_LP_KERNEL/commit/5e81bd47a47f46538892036c0ae1296a9df758bc
+[no comited] kernel/power/powersuspend: new PM kernel driver for Android w/o early_suspend v1.7 (faux123/Yank555.lu) - https://github.com/SlimRoms/kernel_lge_msm8974/commit/50dd9a263388c1b98a07f3f80f5a25a686783a72
+use DORIMANX_LG_STOCK_LP_KERNEL/fs/eventpoll.c - https://github.com/dorimanx/DORIMANX_LG_STOCK_LP_KERNEL/commits/966a5615409387ac9a42d33c1ed543eb6148f0c1/fs/eventpoll.c
+PM / Sleep: Require CAP_BLOCK_SUSPEND to use wake_lock/wake_unlock - https://github.com/dorimanx/DORIMANX_LG_STOCK_LP_KERNEL/commit/c0075ad0fd7569c99e07f75e65f6d6d03123e304
+add sleepy_plug: android_kernel_htc_msm8960/arch/arm/mach-msm/sleepy_plug.c - https://github.com/rmbq/android_kernel_htc_msm8960/commits/a06de1a24e470592135ded1667c61fdb03100228/arch/arm/mach-msm/sleepy_plug.c
+mm: Dynamic management of dirty page writebacks [Christopher83] - https://github.com/UpInTheAir/N9005_Kernel/commit/8779ad62f2efa4be9b8579f1bcf8db8c91ff436f
+kernel: power: remove earlysuspend - https://github.com/CyanogenMod/android_kernel_sony_msm8960t/commit/9da361fedeaef908ea148646811f2653b7ec4e10
+kernel: power: Finish removing earlysuspend - https://github.com/CyanogenMod/android_kernel_sony_msm8960t/commit/363b8c9ce965abc0d2c091ef0d337e673e696e81
+sleepy_plug: consider also online cpu(s) load to make decisions - https://github.com/rmbq/android_kernel_htc_msm8960/commit/428a5d17d1d6e4f098462a7bdebc47bb9f3ab047
+
+cleanup branch after making Powersuspend 
+

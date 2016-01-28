@@ -24,6 +24,12 @@
 #define MAX_INSN_SIZE			2
 #define MAX_STACK_SIZE			64	/* 32 would probably be OK */
 
+ /*
+  * This undefined instruction must be unique and
+  * reserved solely for kprobes' use.
+  */
+// #define KPROBE_BREAKPOINT_INSTRUCTION	0xe7f001f8
+
 #define flush_insn_slot(p)		do { } while (0)
 #define kretprobe_blacklist_size	0
 

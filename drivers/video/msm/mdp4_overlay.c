@@ -12,6 +12,8 @@
  *
  */
 
+#define MDP4_IGC_LUT_ENABLE 1
+
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/sched.h>
@@ -4274,7 +4276,7 @@ int mdp4_overlay_commit(struct fb_info *info)
 	if (mfd == NULL)
 		return -ENODEV;
 
-	if (mdp_fb_is_power_off(mfd))
+	if (mdp_fb_is_power_off(mfd)) /* suspended */
 		return -EINVAL;
 
 	mixer = mfd->panel_info.pdest;	/* DISPLAY_1 or DISPLAY_2 */

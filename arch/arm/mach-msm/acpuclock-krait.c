@@ -21,8 +21,8 @@
 #include <linux/errno.h>
 #include <linux/cpufreq.h>
 #include <linux/cpu.h>
-#include <linux/console.h>
 #include <linux/regulator/consumer.h>
+#include <linux/iopoll.h>
 
 #include <asm/mach-types.h>
 #include <asm/cpu.h>
@@ -39,18 +39,24 @@
 #include "acpuclock.h"
 #include "acpuclock-krait.h"
 #include "avs.h"
-#ifdef CONFIG_SEC_DEBUG_DCVS_LOG
-#include <mach/sec_debug.h>
-#endif
+
 /* MUX source selects. */
 #define PRI_SRC_SEL_SEC_SRC	0
 #define PRI_SRC_SEL_HFPLL	1
 #define PRI_SRC_SEL_HFPLL_DIV2	2
 
-#ifdef CONFIG_SEC_DEBUG_SUBSYS
-int boost_uv;
-int speed_bin;
-int pvs_bin;
+#ifdef CONFIG_CPU_OVERCLOCK
+#ifdef CONFIG_CPU_UNDERCLOCK
+#define FREQ_TABLE_SIZE    44
+#else
+#define FREQ_TABLE_SIZE    39
+#endif
+#else
+#ifdef CONFIG_CPU_UNDERCLOCK
+#define FREQ_TABLE_SIZE    39
+#else
+#define FREQ_TABLE_SIZE    35
+#endif
 #endif
 
 static DEFINE_MUTEX(driver_lock);
@@ -72,8 +78,12 @@ static unsigned long acpuclk_krait_get_rate(int cpu)
 	return drv.scalable[cpu].cur_speed->khz;
 }
 
-/* Select a source on the primary MUX. */
-static void set_pri_clk_src(struct scalable *sc, u32 pri_src_sel)
+struct set_clk_src_args {
+	struct scalable *sc;
+	u32 src_sel;
+};
+
+static void __set_pri_clk_src(struct scalable *sc, u32 pri_src_sel)
 {
 	u32 regval;
 
@@ -84,6 +94,27 @@ static void set_pri_clk_src(struct scalable *sc, u32 pri_src_sel)
 	/* Wait for switch to complete. */
 	mb();
 	udelay(1);
+}
+
+static void __set_cpu_pri_clk_src(void *data)
+{
+	struct set_clk_src_args *args = data;
+	__set_pri_clk_src(args->sc, args->src_sel);
+}
+
+/* Select a source on the primary MUX. */
+static void set_pri_clk_src(struct scalable *sc, u32 pri_src_sel)
+{
+	int cpu = sc - drv.scalable;
+	if (sc != &drv.scalable[L2] && cpu_online(cpu)) {
+		struct set_clk_src_args args = {
+			.sc = sc,
+			.src_sel = pri_src_sel,
+		};
+		smp_call_function_single(cpu, __set_cpu_pri_clk_src, &args, 1);
+	} else {
+		__set_pri_clk_src(sc, pri_src_sel);
+	}
 }
 
 /* Select a source on the secondary MUX. */
@@ -149,8 +180,14 @@ static void hfpll_enable(struct scalable *sc, bool skip_regulators)
 	writel_relaxed(0x6, sc->hfpll_base + drv.hfpll_data->mode_offset);
 
 	/* Wait for PLL to lock. */
-	mb();
-	udelay(60);
+	if (drv.hfpll_data->has_lock_status) {
+		u32 regval;
+		readl_tight_poll(sc->hfpll_base + drv.hfpll_data->status_offset,
+			   regval, regval & BIT(16));
+	} else {
+		mb();
+		udelay(60);
+	}
 
 	/* Enable PLL output. */
 	writel_relaxed(0x7, sc->hfpll_base + drv.hfpll_data->mode_offset);
@@ -394,12 +431,12 @@ static void decrease_vdd(int cpu, struct vdd_data *data,
 	}
 }
 
-static int calculate_vdd_mem(const struct acpu_level *tgt)
+static inline int calculate_vdd_mem(const struct acpu_level *tgt)
 {
 	return drv.l2_freq_tbl[tgt->l2_level].vdd_mem;
 }
 
-static int get_src_dig(const struct core_speed *s)
+static inline int get_src_dig(const struct core_speed *s)
 {
 	const int *hfpll_vdd = drv.hfpll_data->vdd;
 	const u32 low_vdd_l_max = drv.hfpll_data->low_vdd_l_max;
@@ -415,7 +452,7 @@ static int get_src_dig(const struct core_speed *s)
 		return hfpll_vdd[HFPLL_VDD_LOW];
 }
 
-static int calculate_vdd_dig(const struct acpu_level *tgt)
+static inline int calculate_vdd_dig(const struct acpu_level *tgt)
 {
 	int l2_pll_vdd_dig, cpu_pll_vdd_dig;
 
@@ -429,9 +466,13 @@ static int calculate_vdd_dig(const struct acpu_level *tgt)
 static bool enable_boost = true;
 module_param_named(boost, enable_boost, bool, S_IRUGO | S_IWUSR);
 
-static int calculate_vdd_core(const struct acpu_level *tgt)
+static inline int calculate_vdd_core(const struct acpu_level *tgt)
 {
+#if defined(CONFIG_MACH_MELIUS_SKT)||defined(CONFIG_MACH_MELIUS_LGT)||defined(CONFIG_MACH_MELIUS_KTT)
+	return tgt->vdd_core + drv.boost_uv ;
+#else
 	return tgt->vdd_core + (enable_boost ? drv.boost_uv : 0);
+#endif
 }
 
 static DEFINE_MUTEX(l2_regulator_lock);
@@ -475,11 +516,6 @@ out:
 	mutex_unlock(&l2_regulator_lock);
 }
 
-static int minus_vc;
-module_param_named(
-	mclk, minus_vc, int, S_IRUGO | S_IWUSR | S_IWGRP
-);
-
 /* Set the CPU's clock rate and adjust the L2 rate, voltage and BW requests. */
 static int acpuclk_krait_set_rate(int cpu, unsigned long rate,
 				  enum setrate_reason reason)
@@ -519,7 +555,7 @@ static int acpuclk_krait_set_rate(int cpu, unsigned long rate,
 	/* Calculate voltage requirements for the current CPU. */
 	vdd_data.vdd_mem  = calculate_vdd_mem(tgt);
 	vdd_data.vdd_dig  = calculate_vdd_dig(tgt);
-	vdd_data.vdd_core = calculate_vdd_core(tgt) + minus_vc;
+	vdd_data.vdd_core = calculate_vdd_core(tgt);
 	vdd_data.ua_core = tgt->ua_core;
 
 	/* Disable AVS before voltage switch */
@@ -556,9 +592,6 @@ static int acpuclk_krait_set_rate(int cpu, unsigned long rate,
 	 */
 	skip_regulators = (reason == SETRATE_PC);
 
-#ifdef CONFIG_SEC_DEBUG_DCVS_LOG
-	sec_debug_dcvs_log(cpu, strt_acpu_s->khz, tgt_acpu_s->khz);
-#endif
 	/* Set the new CPU speed. */
 	set_speed(&drv.scalable[cpu], tgt_acpu_s, skip_regulators);
 
@@ -610,6 +643,7 @@ static struct acpuclk_data acpuclk_krait_data = {
 	.set_rate = acpuclk_krait_set_rate,
 	.get_rate = acpuclk_krait_get_rate,
 };
+uint32_t global_pvs; /*  This code is temporary code */
 
 /* Initialize a HFPLL at a given rate and enable it. */
 static void __cpuinit hfpll_init(struct scalable *sc,
@@ -930,9 +964,61 @@ static void __init bus_init(const struct l2_level *l2_level)
 		dev_err(drv.dev, "initial bandwidth req failed (%d)\n", ret);
 }
 
+#define MAX_VDD 1300
+#define MIN_VDD 700
+
+ssize_t acpuclk_get_vdd_levels_str(char *buf)
+{
+    
+	int i, len = 0;
+    
+	if (buf) {
+		for (i = 0; drv.acpu_freq_tbl[i].speed.khz; i++) {
+            if (drv.acpu_freq_tbl[i].use_for_scaling) {
+                len += sprintf(buf + len, "%lumhz: %i mV\n",
+                           drv.acpu_freq_tbl[i].speed.khz/1000,
+                           drv.acpu_freq_tbl[i].vdd_core/1000 );
+            }
+		}
+	}
+	return len;
+}
+
+ssize_t acpuclk_set_vdd(char *buf)
+{
+	unsigned int cur_volt;
+	char count[10];
+	int i;
+    int ret = 0;
+    
+	if (!buf)
+		return -EINVAL;
+    
+	for (i = 0; i < drv.acpu_freq_tbl[i].speed.khz; i++) {
+        if (drv.acpu_freq_tbl[i].use_for_scaling) {
+            ret = sscanf(buf, "%d", &cur_volt);
+        
+            if (ret != 1)
+                return -EINVAL;
+        
+            if (cur_volt > MAX_VDD) {
+                cur_volt = MAX_VDD;
+            } else if (cur_volt < MIN_VDD) {
+                cur_volt = MIN_VDD;
+            }
+        
+            drv.acpu_freq_tbl[i].vdd_core = cur_volt*1000;
+                
+            ret = sscanf(buf, "%s", count);
+            buf += (strlen(count)+1);
+        }
+	}
+	return ret;
+}
+
 #ifdef CONFIG_CPU_FREQ_MSM
-static struct cpufreq_frequency_table freq_table[NR_CPUS][35];
-extern int console_batt_stat;
+static struct cpufreq_frequency_table freq_table[NR_CPUS][FREQ_TABLE_SIZE];
+
 static void __init cpufreq_table_init(void)
 {
 	int cpu;
@@ -943,16 +1029,6 @@ static void __init cpufreq_table_init(void)
 		for (i = 0; drv.acpu_freq_tbl[i].speed.khz != 0
 				&& freq_cnt < ARRAY_SIZE(*freq_table)-1; i++) {
 			if (drv.acpu_freq_tbl[i].use_for_scaling) {
-#ifdef CONFIG_SEC_FACTORY 
-				// if factory_condition, set the core freq limit.
-				//QMCK
-				if (console_set_on_cmdline && drv.acpu_freq_tbl[i].speed.khz > 1000000) {
-					if(console_batt_stat == 1) {
-						continue;
-					}
-				}
-				//QMCK
-#endif		
 				freq_table[cpu][freq_cnt].index = freq_cnt;
 				freq_table[cpu][freq_cnt].frequency
 					= drv.acpu_freq_tbl[i].speed.khz;
@@ -1104,11 +1180,8 @@ static struct pvs_table * __init select_freq_plan(u32 pte_efuse_phys,
 	/* Select frequency tables. */
 	bin_idx = get_speed_bin(pte_efuse_val);
 	tbl_idx = get_pvs_bin(pte_efuse_val);
-#ifdef CONFIG_SEC_DEBUG_SUBSYS
-	speed_bin = bin_idx;
-	pvs_bin = tbl_idx;
-#endif
-	
+		/*  This code is temporary */
+		global_pvs = tbl_idx;
 	return &pvs_tables[bin_idx][tbl_idx];
 }
 
@@ -1144,9 +1217,7 @@ static void __init drv_data_init(struct device *dev,
 	drv.acpu_freq_tbl = kmemdup(pvs->table, pvs->size, GFP_KERNEL);
 	BUG_ON(!drv.acpu_freq_tbl);
 	drv.boost_uv = pvs->boost_uv;
-#ifdef CONFIG_SEC_DEBUG_SUBSYS
-	boost_uv = drv.boost_uv;
-#endif
+
 	acpuclk_krait_data.power_collapse_khz = params->stby_khz;
 	acpuclk_krait_data.wait_for_irq_khz = params->stby_khz;
 }

@@ -164,8 +164,8 @@ struct type_set {
 	u32 flags;
 };
 
-/*
- * The configuration data includes security contexts for
+/* 
+* The configuration data includes security contexts for
  * initial SIDs, unlabeled file systems, TCP and UDP port numbers,
  * network interfaces, and nodes.  This structure stores the
  * relevant data for one such entry.  Entries of the same kind

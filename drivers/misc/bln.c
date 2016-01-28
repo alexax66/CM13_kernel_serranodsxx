@@ -2,6 +2,8 @@
  *
  * Copyright 2011  Michael Richter (alias neldar)
  * Copyright 2011  Adam Kent <adam@semicircular.net>
+ * Copyright 2014  Jonathan Jason Dennis [Meticulus] <theonejohnnyd@gmail.com>
+ * Copyright 2014  Vineeth Raj (alias thewisenerd) <contact.twn@opmbx.org>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -10,13 +12,18 @@
 
 #include <linux/platform_device.h>
 #include <linux/init.h>
-#include <linux/earlysuspend.h>
+#ifdef CONFIG_POWERSUSPEND
+#include <linux/powersuspend.h>
+#endif
 #include <linux/device.h>
 #include <linux/miscdevice.h>
 #include <linux/bln.h>
 #include <linux/mutex.h>
 #include <linux/stat.h>
 #include <linux/export.h>
+#include <linux/kthread.h>
+#include <linux/sched.h>
+#include <linux/delay.h>
 #ifdef CONFIG_GENERIC_BLN_USE_WAKELOCK
 #include <linux/wakelock.h>
 #endif
@@ -24,7 +31,10 @@
 static bool bln_enabled = false;
 static bool bln_ongoing = false; /* ongoing LED Notification */
 static int bln_blink_state = 0;
+static int bln_blink_mode = 1; /* blink by default */
 static bool bln_suspended = false; /* is system suspended */
+static unsigned int bln_blink_interval = 1000;
+static unsigned bln_count = 25;
 static struct bln_implementation *bln_imp = NULL;
 
 static long unsigned int notification_led_mask = 0x0;
@@ -38,7 +48,7 @@ static struct wake_lock bln_wake_lock;
 static bool buttons_led_enabled = false;
 #endif
 
-#define BACKLIGHTNOTIFICATION_VERSION 9
+#define BACKLIGHTNOTIFICATION_VERSION 10
 
 static int gen_all_leds_mask(void)
 {
@@ -97,23 +107,40 @@ static void bln_power_off(void)
 	}
 }
 
-static void bln_early_suspend(struct early_suspend *h)
+static void bln_power_suspend(struct power_suspend *h)
 {
 	bln_suspended = true;
 }
 
-static void bln_late_resume(struct early_suspend *h)
+static void bln_late_resume(struct power_suspend *h)
 {
 	bln_suspended = false;
 
 	reset_bln_states();
 }
 
-static struct early_suspend bln_suspend_data = {
-	.level = EARLY_SUSPEND_LEVEL_BLANK_SCREEN + 1,
-	.suspend = bln_early_suspend,
+static struct power_suspend bln_suspend_data = {
+//	.level = EARLY_SUSPEND_LEVEL_BLANK_SCREEN + 1,
+	.suspend = bln_power_suspend,
 	.resume = bln_late_resume,
 };
+
+static void blink_thread(void)
+{
+        unsigned i = 0;
+        while (bln_suspended)
+        {
+                bln_enable_backlights(get_led_mask());
+                msleep(bln_blink_interval);
+                bln_disable_backlights(get_led_mask());
+                msleep(bln_blink_interval);
+                if (bln_count) {
+                        i += 1;
+                        if (i == bln_count)
+                                break;
+                }
+        }
+}
 
 static void enable_led_notification(void)
 {
@@ -126,11 +153,22 @@ static void enable_led_notification(void)
 	*/
 	if (!bln_suspended)
 		return;
+	
+	/*
+	* If we already have a blink thread going
+	* don't start another one.
+	*/
+	if(bln_ongoing & bln_blink_mode)
+		return;
 
 	bln_ongoing = true;
 
 	bln_power_on();
+	if(!bln_blink_mode)
 	bln_enable_backlights(get_led_mask());
+	else
+		kthread_run((void*)&blink_thread, NULL,"bln_blink_thread");
+
 	pr_info("%s: notification led enabled\n", __FUNCTION__);
 }
 
@@ -150,7 +188,7 @@ static ssize_t backlightnotification_status_read(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
 	int ret = 0;
-
+		
 	if(unlikely(!bln_imp))
 		ret = -1;
 
@@ -158,7 +196,7 @@ static ssize_t backlightnotification_status_read(struct device *dev,
 		ret = 1;
 	else
 		ret = 0;
-
+		
 	return sprintf(buf, "%u\n", ret);
 }
 
@@ -191,6 +229,54 @@ static ssize_t backlightnotification_status_write(struct device *dev,
 		pr_info("%s: invalid input range %u\n", __FUNCTION__,
 				data);
 	}
+
+	return size;
+}
+
+static ssize_t backlightnotification_interval_read(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+
+	size_t count = 0;
+	count += sprintf(buf, "%u\n", bln_blink_interval);
+
+	pr_info("%s: read:interval val is %u \n", __FUNCTION__, bln_blink_interval);
+
+	return count;
+
+}
+
+static ssize_t backlightnotification_interval_write(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+
+	unsigned ret = 1000;
+
+	sscanf(buf, "%u\n", &ret);
+
+	//100ms is good enough a val, i guess
+	//TODO: check for any gpio i/o errors with 100 ms
+	if ( ret >= 100 )
+		bln_blink_interval = ret;
+
+	return count;
+}
+
+static ssize_t backlightnotification_count_get(struct device *dev,
+			struct device_attribute *attr, char *buf)
+{
+    return sprintf(buf, "%u\n", bln_count);
+}
+
+static ssize_t backlightnotification_count_set(struct device * dev,
+		struct device_attribute * attr, const char * buf, size_t size)
+{
+	unsigned val = 0;
+
+	sscanf(buf, "%u\n", &val);
+
+	if (!(val > 500)) //arbitrary!
+		bln_count = val;
 
 	return size;
 }
@@ -374,6 +460,12 @@ static DEVICE_ATTR(blink_control, S_IRUGO | S_IWUGO, blink_control_read,
 static DEVICE_ATTR(enabled, S_IRUGO | S_IWUGO,
 		backlightnotification_status_read,
 		backlightnotification_status_write);
+static DEVICE_ATTR(interval, S_IRUGO | S_IWUGO,
+		backlightnotification_interval_read,
+		backlightnotification_interval_write);
+static DEVICE_ATTR(count, S_IRUGO | S_IWUGO,
+		backlightnotification_count_get,
+		backlightnotification_count_set);
 static DEVICE_ATTR(led_count, S_IRUGO , led_count_read, NULL);
 static DEVICE_ATTR(notification_led, S_IRUGO | S_IWUGO,
 		notification_led_status_read,
@@ -391,6 +483,8 @@ static DEVICE_ATTR(wakelock, S_IRUGO | S_IWUGO, wakelock_read, wakelock_write);
 static struct attribute *bln_notification_attributes[] = {
 	&dev_attr_blink_control.attr,
 	&dev_attr_enabled.attr,
+	&dev_attr_interval.attr,
+	&dev_attr_count.attr,
 	&dev_attr_led_count.attr,
 	&dev_attr_notification_led.attr,
 	&dev_attr_notification_led_mask.attr,
@@ -462,7 +556,7 @@ static int __init bln_control_init(void)
 	wake_lock_init(&bln_wake_lock, WAKE_LOCK_SUSPEND, "bln_kernel_wake_lock");
 #endif
 
-	register_early_suspend(&bln_suspend_data);
+	register_power_suspend(&bln_suspend_data);
 
 	return 0;
 }

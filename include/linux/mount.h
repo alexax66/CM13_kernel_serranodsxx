@@ -46,7 +46,6 @@ struct mnt_namespace;
 				 | MNT_NOATIME | MNT_NODIRATIME | MNT_RELATIME \
 				 | MNT_READONLY)
 
-
 #define MNT_INTERNAL	0x4000
 
 struct vfsmount {

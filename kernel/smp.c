@@ -13,6 +13,8 @@
 #include <linux/smp.h>
 #include <linux/cpu.h>
 
+#include "smpboot.h"
+
 #ifdef CONFIG_USE_GENERIC_SMP_HELPERS
 static struct {
 	struct list_head	queue;
@@ -111,7 +113,7 @@ static void csd_lock_wait(struct call_single_data *data)
 static void csd_lock(struct call_single_data *data)
 {
 	csd_lock_wait(data);
-	data->flags = CSD_FLAG_LOCK;
+	data->flags |= CSD_FLAG_LOCK;
 
 	/*
 	 * prevent CPU from reordering the above assignment
@@ -444,8 +446,10 @@ void __smp_call_function_single(int cpu, struct call_single_data *data,
  * If @wait is true, then returns once @func has returned.
  *
  * You must not call this function with disabled interrupts or from a
- * hardware interrupt handler or from a bottom half handler. Preemption
- * must be disabled when calling this function.
+ * hardware interrupt handler or from a bottom half handler.  The
+ * exception is that it may be used during early boot while
+ * early_boot_irqs_disabled is set.
+ * Preemption must be disabled when calling this function.
  */
 void smp_call_function_many(const struct cpumask *mask,
 			    smp_call_func_t func, void *info, bool wait)
@@ -680,6 +684,8 @@ void __init smp_init(void)
 {
 	unsigned int cpu;
 
+	idle_threads_init();
+
 	/* FIXME: This should be done in userspace --RR */
 	for_each_present_cpu(cpu) {
 		if (num_online_cpus() >= setup_max_cpus)
@@ -734,9 +740,10 @@ void on_each_cpu_mask(const struct cpumask *mask, smp_call_func_t func,
 
 	smp_call_function_many(mask, func, info, wait);
 	if (cpumask_test_cpu(cpu, mask)) {
-		local_irq_disable();
+		unsigned long flags;
+		local_irq_save(flags);
 		func(info);
-		local_irq_enable();
+		local_irq_restore(flags);
 	}
 	put_cpu();
 }
@@ -802,3 +809,26 @@ void on_each_cpu_cond(bool (*cond_func)(int cpu, void *info),
 	}
 }
 EXPORT_SYMBOL(on_each_cpu_cond);
+
+static void do_nothing(void *unused)
+{
+}
+
+/**
+ * kick_all_cpus_sync - Force all cpus out of idle
+ *
+ * Used to synchronize the update of pm_idle function pointer. It's
+ * called after the pointer is updated and returns after the dummy
+ * callback function has been executed on all cpus. The execution of
+ * the function can only happen on the remote cpus after they have
+ * left the idle function which had been called via pm_idle function
+ * pointer. So it's guaranteed that nothing uses the previous pointer
+ * anymore.
+ */
+void kick_all_cpus_sync(void)
+{
+	/* Make sure the change is visible before we kick the cpus */
+	smp_mb();
+	smp_call_function(do_nothing, NULL, 1);
+}
+EXPORT_SYMBOL_GPL(kick_all_cpus_sync);

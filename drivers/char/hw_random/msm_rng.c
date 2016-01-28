@@ -242,7 +242,6 @@ static struct platform_driver rng_driver = {
 	.remove     = __devexit_p(msm_rng_remove),
 	.driver     = {
 		.name   = DRIVER_NAME,
-		.owner  = THIS_MODULE,
 		.of_match_table = qrng_match,
 	}
 };

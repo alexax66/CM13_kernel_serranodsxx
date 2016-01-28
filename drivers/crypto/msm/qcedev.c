@@ -974,11 +974,6 @@ static int qcedev_sha_final(struct qcedev_async_req *qcedev_areq,
 		return -EINVAL;
 	}
 
-	if (handle->sha_ctxt.trailing_buf_len == 0) {
-		pr_err("%s Incorrect trailng buffer %d\n", __func__,
-					handle->sha_ctxt.trailing_buf_len);
-		return -EINVAL;
-	}
 	handle->sha_ctxt.last_blk = 1;
 
 	total = handle->sha_ctxt.trailing_buf_len;
@@ -1906,14 +1901,42 @@ static int qcedev_check_sha_params(struct qcedev_sha_op_req *req,
 	uint32_t i;
 
 	if ((req->alg == QCEDEV_ALG_AES_CMAC) &&
-				(!podev->ce_support.cmac))
+				(!podev->ce_support.cmac)) {
+	pr_err("%s: CMAC not supported\n", __func__);
 		goto sha_error;
+	}
 
-	if ((req->entries == 0) || (req->data_len == 0))
+	if ((!req->entries) || (req->entries >  QCEDEV_MAX_BUFFERS)) {
+		pr_err("%s: Invalid num entries (%d)\n",
+						__func__, req->entries);
 		goto sha_error;
+	}
 
-	if (req->alg >= QCEDEV_ALG_SHA_ALG_LAST)
+	if (req->alg >= QCEDEV_ALG_SHA_ALG_LAST) {
+		pr_err("%s: Invalid algorithm (%d)\n", __func__, req->alg);
 		goto sha_error;
+	}
+
+	if ((req->alg == QCEDEV_ALG_SHA1_HMAC) ||
+			(req->alg == QCEDEV_ALG_SHA1_HMAC)) {
+		if (req->authkey == NULL) {
+			pr_err("%s: Invalid authkey pointer\n", __func__);
+			goto sha_error;
+		}
+		if (req->authklen <= 0) {
+			pr_err("%s: Invalid authkey length (%d)\n",
+						__func__, req->authklen);
+			goto sha_error;
+		}
+	}
+
+	if (req->alg == QCEDEV_ALG_AES_CMAC) {
+		if ((req->authklen != QCEDEV_AES_KEY_128) &&
+					(req->authklen != QCEDEV_AES_KEY_256)) {
+			pr_err("%s: unsupported key length\n", __func__);
+			goto sha_error;
+		}
+	}
 
 	/* Check for sum of all src length is equal to data_len  */
 	for (i = 0, total = 0; i < req->entries; i++) {

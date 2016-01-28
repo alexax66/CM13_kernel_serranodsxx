@@ -201,6 +201,7 @@ struct msm_fb_panel_data {
 	void (*set_vsync_notifier) (msm_fb_vsync_handler_type, void *arg);
 	void (*set_backlight) (struct msm_fb_data_type *);
 	int (*get_backlight_on_status) (void);
+	int (*low_power_config) (struct platform_device *pdev, int enable);
 
 	/* function entry chain */
 	int (*on) (struct platform_device *pdev);
@@ -209,7 +210,6 @@ struct msm_fb_panel_data {
 	int (*power_ctrl) (boolean enable);
 	struct platform_device *next;
 	int (*clk_func) (int enable);
-	int (*low_power_config) (struct platform_device *pdev, int enable);
 };
 
 /*===========================================================================

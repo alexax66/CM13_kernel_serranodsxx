@@ -108,6 +108,25 @@ static int padzero(unsigned long elf_bss)
 	return 0;
 }
 
+/* 
+ * Use get_random_int() to implement AT_RANDOM while avoiding depletion 
+ * of the entropy pool. 
+ */ 
+static void get_atrandom_bytes(unsigned char *buf, size_t nbytes) 
+{ 
+ unsigned char *p = buf; 
+ 
+ while (nbytes) { 
+ unsigned int random_variable; 
+ size_t chunk = min(nbytes, sizeof(random_variable)); 
+ 
+ random_variable = get_random_int(); 
+ memcpy(p, &random_variable, chunk); 
+ p += chunk; 
+ nbytes -= chunk; 
+ } 
+} 
+
 /* Let's use some macros to make this stack manipulation a little clearer */
 #ifdef CONFIG_STACK_GROWSUP
 #define STACK_ADD(sp, items) ((elf_addr_t __user *)(sp) + (items))
@@ -193,7 +212,8 @@ create_elf_tables(struct linux_binprm *bprm, struct elfhdr *exec,
 	/*
 	 * Generate 16 random bytes for userspace PRNG seeding.
 	 */
-	get_random_bytes(k_rand_bytes, sizeof(k_rand_bytes));
+/*	get_random_bytes(k_rand_bytes, sizeof(k_rand_bytes)); */
+	get_atrandom_bytes(k_rand_bytes, sizeof(k_rand_bytes));
 	u_rand_bytes = (elf_addr_t __user *)
 		       STACK_ALLOC(p, sizeof(k_rand_bytes));
 	if (__copy_to_user(u_rand_bytes, k_rand_bytes, sizeof(k_rand_bytes)))
@@ -539,11 +559,12 @@ out:
 
 static unsigned long randomize_stack_top(unsigned long stack_top)
 {
-	unsigned int random_variable = 0;
+	unsigned long random_variable = 0;
 
 	if ((current->flags & PF_RANDOMIZE) &&
 		!(current->personality & ADDR_NO_RANDOMIZE)) {
-		random_variable = get_random_int() & STACK_RND_MASK;
+		random_variable = (unsigned long) get_random_int();
+		random_variable &= STACK_RND_MASK;
 		random_variable <<= PAGE_SHIFT;
 	}
 #ifdef CONFIG_STACK_GROWSUP

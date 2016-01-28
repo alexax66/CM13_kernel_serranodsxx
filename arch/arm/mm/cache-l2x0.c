@@ -142,6 +142,11 @@ void l2x0_cache_sync(void)
 	raw_spin_unlock_irqrestore(&l2x0_lock, flags);
 }
 
+static uint32_t l2x0_get_size(void)
+{
+	return l2x0_size;
+}
+
 #ifdef CONFIG_PL310_ERRATA_727915
 static void l2x0_for_each_set_way(void __iomem *reg)
 {
@@ -423,10 +428,11 @@ void __init l2x0_init(void __iomem *base, u32 aux_val, u32 aux_mask)
 		outer_cache.inv_range = l2x0_inv_range;
 		outer_cache.clean_range = l2x0_clean_range;
 		outer_cache.flush_range = l2x0_flush_range;
-	outer_cache.sync = l2x0_cache_sync;
-	outer_cache.flush_all = l2x0_flush_all;
-	outer_cache.inv_all = l2x0_inv_all;
-	outer_cache.disable = l2x0_disable;
+		outer_cache.sync = l2x0_cache_sync;
+		outer_cache.flush_all = l2x0_flush_all;
+		outer_cache.clean_all = l2x0_clean_all;
+		outer_cache.inv_all = l2x0_inv_all;
+		outer_cache.disable = l2x0_disable;
 
 	printk(KERN_INFO "%s cache controller enabled\n", type);
 	printk(KERN_INFO "l2x0: %d ways, CACHE_ID 0x%08x, AUX_CTRL 0x%08x, Cache size: %d B\n",

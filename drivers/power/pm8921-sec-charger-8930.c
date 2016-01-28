@@ -38,6 +38,10 @@
 #include <mach/msm_hsusb.h>
 #include <mach/msm8930-gpio.h>
 
+#ifdef CONFIG_FORCE_FAST_CHARGE
+#include <linux/fastchg.h>
+#endif
+
 #include <linux/battery/sec_charging_common_8930.h>
 #include <linux/i2c/tsu6721.h>
 
@@ -1830,8 +1834,6 @@ static int sec_fg_get_scaled_capacity(
 	scaled_soc = (raw_soc < chip->batt_pdata->capacity_min) ?
 		0 : ((raw_soc - chip->batt_pdata->capacity_min) * 1000 /
 		(chip->capacity_max - chip->batt_pdata->capacity_min));
-	if(scaled_soc > 1009)
-		scaled_soc = 1009;
 
 	pr_debug("%s: scaled capacity (%d.%d)\n",
 		__func__, scaled_soc/10, scaled_soc%10);
@@ -1843,6 +1845,7 @@ static int sec_fg_get_scaled_capacity(
 static int sec_fg_calculate_dynamic_scale(
 			struct pm8921_chg_chip *chip, int raw_soc)
 {
+	raw_soc += 10;
 	if (raw_soc <
 		chip->batt_pdata->capacity_max -
 		chip->batt_pdata->capacity_max_margin)
@@ -2651,6 +2654,8 @@ static int pm_batt_power_set_property(struct power_supply *psy,
 	struct pm8921_chg_chip *chip = container_of(psy, struct pm8921_chg_chip,
 								batt_psy);
 	enum cable_type_t new_cable_type;
+	int batt_capacity;
+
 	if (!chip->dev) {
 		pr_err("called before init\n");
 		goto error_check;
@@ -2669,6 +2674,11 @@ static int pm_batt_power_set_property(struct power_supply *psy,
 				break;
 			}
 #endif
+			if (chip->batt_status == POWER_SUPPLY_STATUS_FULL) {
+				batt_capacity = get_prop_batt_capacity(chip);
+				sec_fg_calculate_dynamic_scale(chip,
+					chip->capacity_raw * 10);
+			}
 			new_cable_type = CABLE_TYPE_NONE;
 			break;
 		case POWER_SUPPLY_TYPE_MAINS:
@@ -3305,7 +3315,39 @@ static void __pm8921_charger_vbus_draw(unsigned int mA)
 			i--;
 		if (i < 0)
 			i = 0;
+
+#ifdef CONFIG_FORCE_FAST_CHARGE
+		if (force_fast_charge == 1)
+			i = 14;
+		else if (force_fast_charge == 2) {
+			switch (fast_charge_level) {
+				case FAST_CHARGE_500:
+					i = 2;
+					break;
+				case FAST_CHARGE_700:
+					i = 4;
+					break;
+				case FAST_CHARGE_900:
+					i = 8;
+					break;
+				case FAST_CHARGE_1100:
+					i = 10;
+					break;
+				case FAST_CHARGE_1300:
+					i = 12;
+					break;
+				case FAST_CHARGE_1500:
+					i = 14;
+					break;
+				default:
+					break;
+			}
+		}
 		rc = pm_chg_iusbmax_set(the_chip, i);
+		pr_info("charge curent index => %d\n", i);
+#else
+		rc = pm_chg_iusbmax_set(the_chip, i);
+#endif
 		if (rc)
 			pr_err("unable to set iusb to %d rc = %d\n", i, rc);
 	}
@@ -3655,9 +3697,6 @@ static void handle_cable_insertion_removal(struct pm8921_chg_chip *chip)
 
 	switch (chip->cable_type) {
 	case CABLE_TYPE_NONE:
-		if (chip->batt_status == POWER_SUPPLY_STATUS_FULL)
-			sec_fg_calculate_dynamic_scale(chip, chip->capacity_raw * 10);
-			/* break is not need */
 	case CABLE_TYPE_INCOMPATIBLE:
 #if defined(CONFIG_WIRELESS_CHARGING)
 		gpio_set_value(chip->wpc_acok, WPC_ACOK_ENABLE);

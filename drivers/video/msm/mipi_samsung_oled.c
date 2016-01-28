@@ -148,7 +148,7 @@ static void read_reg(char srcReg, int srcLength, char *destBuffer,
 
 	read_reg[0] = srcReg;
 
-	show_buffer_pos +=
+	show_buffer_pos o("mipi_samsung_disp_get_power(%d)\n", !mdp_fb_is_power_off(mfd));+=
 		snprintf(show_buffer, 256, "read_reg : %X[%d] : ",
 				srcReg, srcLength);
 
@@ -700,7 +700,7 @@ static ssize_t mipi_samsung_disp_get_power(struct device *dev,
 	if (unlikely(mfd->key != MFD_KEY))
 		return -EINVAL;
 
-	rc = sprintf((char *)buf, "%d\n", !mdp_fb_is_power_off(mfd));
+	rc = snprintf((char *)buf, (int)sizeof(buf), "%d\n", !mdp_fb_is_power_off(mfd));
 	pr_info("mipi_samsung_disp_get_power(%d)\n", !mdp_fb_is_power_off(mfd));
 
 	return rc;

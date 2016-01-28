@@ -44,6 +44,10 @@
 #define INIT_UDELAY		200
 #define MAX_UDELAY		2000
 
+#ifdef CONFIG_CPU_FREQ_GOV_SLIM
+int graphics_boost = 6;
+#endif
+
 struct clk_pair {
 	const char *name;
 	uint map;
@@ -188,6 +192,10 @@ void kgsl_pwrctrl_pwrlevel_change(struct kgsl_device *device,
 
 
 	trace_kgsl_pwrlevel(device, pwr->active_pwrlevel, pwrlevel->gpu_freq);
+
+#ifdef CONFIG_CPU_FREQ_GOV_SLIM
+        graphics_boost = pwr->active_pwrlevel;
+#endif
 }
 
 EXPORT_SYMBOL(kgsl_pwrctrl_pwrlevel_change);
@@ -1112,6 +1120,7 @@ int kgsl_pwrctrl_init(struct kgsl_device *device)
 	pwr->pm_qos_latency = 501;
 
 	pm_runtime_enable(device->parentdev);
+//	register_power_suspend(&device->display_off);
 	return result;
 
 clk_err:
@@ -1131,6 +1140,7 @@ void kgsl_pwrctrl_close(struct kgsl_device *device)
 	KGSL_PWR_INFO(device, "close device %d\n", device->id);
 
 	pm_runtime_disable(device->parentdev);
+//	unregister_power_suspend(&device->display_off);
 
 	clk_put(pwr->ebi1_clk);
 

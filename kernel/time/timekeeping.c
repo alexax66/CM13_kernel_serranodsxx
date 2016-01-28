@@ -243,32 +243,6 @@ void getnstimeofday(struct timespec *ts)
 
 EXPORT_SYMBOL(getnstimeofday);
 
-ktime_t ktime_get(void)
-{
-	unsigned int seq;
-	s64 secs, nsecs;
-
-	WARN_ON(timekeeping_suspended);
-
-	do {
-		seq = read_seqbegin(&timekeeper.lock);
-		secs = timekeeper.xtime.tv_sec +
-				timekeeper.wall_to_monotonic.tv_sec;
-		nsecs = timekeeper.xtime.tv_nsec +
-				timekeeper.wall_to_monotonic.tv_nsec;
-		nsecs += timekeeping_get_ns();
-		/* If arch requires, add in gettimeoffset() */
-		nsecs += arch_gettimeoffset();
-
-	} while (read_seqretry(&timekeeper.lock, seq));
-	/*
-	 * Use ktime_set/ktime_add_ns to create a proper ktime on
-	 * 32-bit architectures without CONFIG_KTIME_SCALAR.
-	 */
-	return ktime_add_ns(ktime_set(secs, 0), nsecs);
-}
-EXPORT_SYMBOL_GPL(ktime_get);
-
 /**
  * ktime_get_ts - get the monotonic clock in timespec format
  * @ts:		pointer to timespec variable
@@ -753,6 +727,43 @@ static struct syscore_ops timekeeping_syscore_ops = {
 	.suspend	= timekeeping_suspend,
 };
 
+ktime_t ktime_get(void)
+{
+	unsigned int seq;
+	int timekeeping_state_now = 0;
+	s64 secs, nsecs;
+
+	if (timekeeping_suspended) {
+		timekeeping_resume();
+		timekeeping_state_now = 1;
+	}
+
+	WARN_ON(timekeeping_suspended);
+
+	do {
+		seq = read_seqbegin(&timekeeper.lock);
+		secs = timekeeper.xtime.tv_sec +
+				timekeeper.wall_to_monotonic.tv_sec;
+		nsecs = timekeeper.xtime.tv_nsec +
+				timekeeper.wall_to_monotonic.tv_nsec;
+		nsecs += timekeeping_get_ns();
+		/* If arch requires, add in gettimeoffset() */
+		nsecs += arch_gettimeoffset();
+
+	} while (read_seqretry(&timekeeper.lock, seq));
+
+	if (timekeeping_state_now)
+		timekeeping_suspend();
+
+	/*
+	 * Use ktime_set/ktime_add_ns to create a proper ktime on
+	 * 32-bit architectures without CONFIG_KTIME_SCALAR.
+	 */
+
+	return ktime_add_ns(ktime_set(secs, 0), nsecs);
+}
+EXPORT_SYMBOL_GPL(ktime_get);
+
 static int __init timekeeping_init_ops(void)
 {
 	register_syscore_ops(&timekeeping_syscore_ops);
@@ -1140,7 +1151,7 @@ void get_monotonic_boottime(struct timespec *ts)
 	} while (read_seqretry(&timekeeper.lock, seq));
 
 	set_normalized_timespec(ts, ts->tv_sec + tomono.tv_sec + sleep.tv_sec,
-			ts->tv_nsec + tomono.tv_nsec + sleep.tv_nsec + nsecs);
+		(s64)ts->tv_nsec + tomono.tv_nsec + sleep.tv_nsec + nsecs);
 }
 EXPORT_SYMBOL_GPL(get_monotonic_boottime);
 

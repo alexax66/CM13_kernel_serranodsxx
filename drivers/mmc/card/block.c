@@ -1178,7 +1178,8 @@ static int mmc_blk_issue_flush(struct mmc_queue *mq, struct request *req)
 	int ret = 0;
 
 	ret = mmc_flush_cache(card);
-	if (ret == -ETIMEDOUT) {
+	if (ret == -ETIMEDOUT &&
+	    (card->quirks & MMC_QUIRK_RETRY_FLUSH_TIMEOUT)) {
 		pr_info("%s: requeue flush request after timeout", __func__);
 		spin_lock_irq(q->queue_lock);
 		blk_requeue_request(q, req);
@@ -1412,6 +1413,7 @@ static int mmc_blk_update_interrupted_req(struct mmc_card *card,
 {
 	int ret = MMC_BLK_SUCCESS;
 	u8 *ext_csd;
+	int retry, status, err;
 	int correctly_done;
 	struct mmc_queue_req *mq_rq = container_of(areq, struct mmc_queue_req,
 				      mmc_active);
@@ -1426,10 +1428,33 @@ static int mmc_blk_update_interrupted_req(struct mmc_card *card,
 		return MMC_BLK_ABORT;
 
 	/* get correctly programmed sectors number from card */
-	ret = mmc_send_ext_csd(card, ext_csd);
+	for (retry = 2; retry >= 0; retry--) {
+		ret = mmc_send_ext_csd(card, ext_csd);
+		if (!ret)
+			break;
+		pr_err("%s: error %d reading correctly programmed sectors, %sing\n",
+		       mq_rq->req->rq_disk->disk_name, ret,
+		       retry ? "retry" : "abort");
+		err = get_card_status(card, &status, 0);
+		if (err)
+			pr_err("%s: error %d sending status command\n",
+			       mq_rq->req->rq_disk->disk_name, err);
+		else
+			pr_err("%s: card status: 0x%X\n",
+			       mq_rq->req->rq_disk->disk_name, status);
+
+		if (R1_CURRENT_STATE(status) == R1_STATE_DATA ||
+		    R1_CURRENT_STATE(status) == R1_STATE_RCV) {
+			err = send_stop(card, &status);
+			if (err) {
+				pr_err("%s: error %d sending stop command; status: 0x%X\n",
+				       mq_rq->req->rq_disk->disk_name, err,
+				       status);
+				break;
+			}
+		}
+	}
 	if (ret) {
-		pr_err("%s: error %d reading ext_csd\n",
-				mmc_hostname(card->host), ret);
 		ret = MMC_BLK_ABORT;
 		goto exit;
 	}
@@ -1460,11 +1485,18 @@ static int mmc_blk_packed_err_check(struct mmc_card *card,
 			mmc_active);
 	struct request *req = mq_rq->req;
 	int err, check, status;
+	int retry;
 	u8 ext_csd[512];
 
 	mq_rq->packed_retries--;
 	check = mmc_blk_err_check(card, areq);
-	err = get_card_status(card, &status, 0);
+	for (retry = 2; retry >= 0; retry--) {
+		err = get_card_status(card, &status, 0);
+		if (!err)
+			break;
+		pr_err("%s: error %d sending status command, %sing\n",
+		       req->rq_disk->disk_name, err, retry ? "retry" : "abort");
+	}
 	if (err) {
 		pr_err("%s: error %d sending status command\n",
 				req->rq_disk->disk_name, err);
@@ -2428,6 +2460,7 @@ static int mmc_blk_issue_rq(struct mmc_queue *mq, struct request *req)
 	int ret;
 	struct mmc_blk_data *md = mq->data;
 	struct mmc_card *card = md->queue.card;
+	unsigned int cmd_flags = req ? req->cmd_flags : 0;
 
 #ifdef CONFIG_MMC_BLOCK_DEFERRED_RESUME
 	if (mmc_bus_needs_resume(card->host)) {
@@ -2456,20 +2489,21 @@ static int mmc_blk_issue_rq(struct mmc_queue *mq, struct request *req)
 
 	clear_bit(MMC_QUEUE_NEW_REQUEST, &mq->flags);
 	clear_bit(MMC_QUEUE_URGENT_REQUEST, &mq->flags);
-	if (req && req->cmd_flags & REQ_SANITIZE) {
+	if (cmd_flags & REQ_SANITIZE) {
 		/* complete ongoing async transfer before issuing sanitize */
 		if (card->host && card->host->areq)
 			mmc_blk_issue_rw_rq(mq, NULL);
 		ret = mmc_blk_issue_sanitize_rq(mq, req);
-	} else if (req && req->cmd_flags & REQ_DISCARD) {
+	} else if (cmd_flags & REQ_DISCARD) {
 		/* complete ongoing async transfer before issuing discard */
 		if (card->host->areq)
 			mmc_blk_issue_rw_rq(mq, NULL);
-		if (req->cmd_flags & REQ_SECURE)
+		if (cmd_flags & REQ_SECURE &&
+	    !(card->quirks & MMC_QUIRK_SEC_ERASE_TRIM_BROKEN))
 			ret = mmc_blk_issue_secdiscard_rq(mq, req);
 		else
 			ret = mmc_blk_issue_discard_rq(mq, req);
-	} else if (req && req->cmd_flags & REQ_FLUSH) {
+	} else if (cmd_flags & REQ_FLUSH) {
 		/* complete ongoing async transfer before issuing flush */
 		if (card->host->areq)
 			mmc_blk_issue_rw_rq(mq, NULL);
@@ -2487,8 +2521,7 @@ out:
 	 */
 	if ((!req && !(test_bit(MMC_QUEUE_NEW_REQUEST, &mq->flags))) ||
 			((test_bit(MMC_QUEUE_URGENT_REQUEST, &mq->flags)) &&
-			 !(mq->mqrq_cur->req->cmd_flags &
-				MMC_REQ_NOREINSERT_MASK))) {
+			 !(cmd_flags & MMC_REQ_NOREINSERT_MASK))) {
 		if (mmc_card_need_bkops(card))
 			mmc_start_bkops(card, false);
 		/* release host only when there are no more requests */
@@ -2826,10 +2859,6 @@ force_ro_fail:
 	return ret;
 }
 
-#define CID_MANFID_SANDISK	0x2
-#define CID_MANFID_TOSHIBA	0x11
-#define CID_MANFID_MICRON	0x13
-
 static const struct mmc_fixup blk_fixups[] =
 {
 	MMC_FIXUP("SEM02G", CID_MANFID_SANDISK, 0x100, add_quirk,
@@ -2842,6 +2871,17 @@ static const struct mmc_fixup blk_fixups[] =
 		  MMC_QUIRK_INAND_CMD38),
 	MMC_FIXUP("SEM32G", CID_MANFID_SANDISK, 0x100, add_quirk,
 		  MMC_QUIRK_INAND_CMD38),
+
+	/*
+	 * Sometimes, these Sandisk iNAND devices have a race condition during
+	 * an HPI that causes the card to enter the incorrect state.
+	 */
+	MMC_FIXUP_EXT_CSD_REV("SEM08G", CID_MANFID_SANDISK2, CID_OEMID_ANY,
+			      add_quirk_mmc, MMC_QUIRK_SLOW_HPI_RESPONSE, 6),
+	MMC_FIXUP_EXT_CSD_REV("SEM16G", CID_MANFID_SANDISK2, CID_OEMID_ANY,
+			      add_quirk_mmc, MMC_QUIRK_SLOW_HPI_RESPONSE, 6),
+	MMC_FIXUP_EXT_CSD_REV("SEM32G", CID_MANFID_SANDISK2, CID_OEMID_ANY,
+			      add_quirk_mmc, MMC_QUIRK_SLOW_HPI_RESPONSE, 6),
 
 	/*
 	 * Some MMC cards experience performance degradation with CMD23
@@ -2865,10 +2905,42 @@ static const struct mmc_fixup blk_fixups[] =
 	MMC_FIXUP(CID_NAME_ANY, CID_MANFID_MICRON, 0x200, add_quirk_mmc,
 		  MMC_QUIRK_LONG_READ_TIME),
 
-	/* Some INAND MCP devices advertise incorrect timeout values */
-	MMC_FIXUP("SEM04G", 0x45, CID_OEMID_ANY, add_quirk_mmc,
-		  MMC_QUIRK_INAND_DATA_TIMEOUT),
+//	/* Some INAND MCP devices advertise incorrect timeout values */
+//	MMC_FIXUP("SEM04G", 0x45, CID_OEMID_ANY, add_quirk_mmc,
+//		  MMC_QUIRK_INAND_DATA_TIMEOUT),
 
+	/*
+	* On these Samsung MoviNAND parts, performing secure erase or
+	* secure trim can result in unrecoverable corruption due to a
+	* firmware bug.
+	*/
+	MMC_FIXUP("M8G2FA", CID_MANFID_SAMSUNG, CID_OEMID_ANY, add_quirk_mmc,
+		  MMC_QUIRK_SEC_ERASE_TRIM_BROKEN),
+	MMC_FIXUP("MAG4FA", CID_MANFID_SAMSUNG, CID_OEMID_ANY, add_quirk_mmc,
+		  MMC_QUIRK_SEC_ERASE_TRIM_BROKEN),
+	MMC_FIXUP("MBG8FA", CID_MANFID_SAMSUNG, CID_OEMID_ANY, add_quirk_mmc,
+		  MMC_QUIRK_SEC_ERASE_TRIM_BROKEN),
+	MMC_FIXUP("MCGAFA", CID_MANFID_SAMSUNG, CID_OEMID_ANY, add_quirk_mmc,
+		  MMC_QUIRK_SEC_ERASE_TRIM_BROKEN),
+	MMC_FIXUP("VAL00M", CID_MANFID_SAMSUNG, CID_OEMID_ANY, add_quirk_mmc,
+		  MMC_QUIRK_SEC_ERASE_TRIM_BROKEN),
+	MMC_FIXUP("VYL00M", CID_MANFID_SAMSUNG, CID_OEMID_ANY, add_quirk_mmc,
+		  MMC_QUIRK_SEC_ERASE_TRIM_BROKEN),
+	MMC_FIXUP("KYL00M", CID_MANFID_SAMSUNG, CID_OEMID_ANY, add_quirk_mmc,
+		  MMC_QUIRK_SEC_ERASE_TRIM_BROKEN),
+	MMC_FIXUP("VZL00M", CID_MANFID_SAMSUNG, CID_OEMID_ANY, add_quirk_mmc,
+		  MMC_QUIRK_SEC_ERASE_TRIM_BROKEN),
+	MMC_FIXUP(CID_NAME_ANY, CID_MANFID_HYNIX, CID_OEMID_ANY, add_quirk_mmc,
+		  MMC_QUIRK_BROKEN_DATA_TIMEOUT),
+
+	MMC_FIXUP("CGND3R", CID_MANFID_SAMSUNG, CID_OEMID_ANY, add_quirk_mmc,
+		  MMC_QUIRK_SEC_SEARCH_TUNE),
+
+	/* Disable cache for this cards */
+	MMC_FIXUP("H8G2d", CID_MANFID_HYNIX, CID_OEMID_ANY, add_quirk_mmc,
+		  MMC_QUIRK_CACHE_DISABLE),
+	MMC_FIXUP(CID_NAME_ANY, CID_MANFID_HYNIX, CID_OEMID_ANY, add_quirk_mmc,
+		  MMC_QUIRK_RETRY_FLUSH_TIMEOUT),
 	END_FIXUP
 };
 

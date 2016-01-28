@@ -42,7 +42,6 @@
 #include <linux/ctype.h>
 #include <linux/mm.h>
 #include <linux/mempolicy.h>
-#include <linux/sched.h>
 
 #include <linux/compat.h>
 #include <linux/syscalls.h>
@@ -123,6 +122,7 @@ int C_A_D = 1;
 struct pid *cad_pid;
 EXPORT_SYMBOL(cad_pid);
 
+atomic_t reboot_triggered;
 /*
  * If set, this is used for preparing the system to power off.
  */
@@ -196,6 +196,10 @@ static bool set_one_prio_perm(struct task_struct *p)
 		return true;
 	return false;
 }
+
+int (*timer_slack_check)(struct task_struct *task, unsigned long slack_ns) =
+	NULL;
+EXPORT_SYMBOL_GPL(timer_slack_check);
 
 /*
  * set the priority of a task
@@ -427,6 +431,10 @@ void kernel_restart(char *cmd)
 		printk(KERN_EMERG "Restarting system.\n");
 	else
 		printk(KERN_EMERG "Restarting system with command '%s'.\n", cmd);
+	printk(KERN_EMERG "Current task:%s(%d) Parent task:%s(%d)\n",
+		current->comm, current->pid,
+		current->real_parent->comm,
+		current->real_parent->pid);
 	kmsg_dump(KMSG_DUMP_RESTART);
 	machine_restart(cmd);
 }
@@ -472,10 +480,20 @@ void kernel_power_off(void)
 	disable_nonboot_cpus();
 	syscore_shutdown();
 	printk(KERN_EMERG "Power down.\n");
+	printk(KERN_EMERG "Current task:%s(%d) Parent task:%s(%d)\n",
+		current->comm, current->pid,
+		current->real_parent->comm,
+		current->real_parent->pid);
 	kmsg_dump(KMSG_DUMP_POWEROFF);
 	machine_power_off();
 }
 EXPORT_SYMBOL_GPL(kernel_power_off);
+
+int reboot_in_progress(void)
+{
+	return atomic_cmpxchg(&reboot_triggered, 0, 1);
+}
+EXPORT_SYMBOL_GPL(reboot_in_progress);
 
 static DEFINE_MUTEX(reboot_mutex);
 
@@ -513,6 +531,12 @@ SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
 	ret = reboot_pid_ns(task_active_pid_ns(current), cmd);
 	if (ret)
 		return ret;
+
+	/* return if reboot is already triggered */
+	if (atomic_cmpxchg(&reboot_triggered, 0, 1)) {
+		pr_err("Reboot already triggered\n");
+		return ret;
+	}
 
 	/* Instead of trying to make the power_off code look like
 	 * halt when pm_power_off is not set do it the easy way.
@@ -727,6 +751,7 @@ static int set_user(struct cred *new)
 
 	free_uid(new->user);
 	new->user = new_user;
+	sched_autogroup_create_attach(current);
 	return 0;
 }
 
@@ -1268,7 +1293,7 @@ out:
 	write_unlock_irq(&tasklist_lock);
 	if (err > 0) {
 		proc_sid_connector(group_leader);
-		sched_autogroup_create_attach(group_leader);
+
 	}
 	return err;
 }
@@ -2160,7 +2185,7 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 			error = prctl_get_seccomp();
 			break;
 		case PR_SET_SECCOMP:
-			error = prctl_set_seccomp(arg2);
+			error = prctl_set_seccomp(arg2, (char __user *)arg3);
 			break;
 		case PR_GET_TSC:
 			error = GET_TSC_CTL(arg2);
@@ -2177,13 +2202,19 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 		case PR_GET_TIMERSLACK:
 			error = current->timer_slack_ns;
 			break;
+		case PR_GET_EFFECTIVE_TIMERSLACK:
+			error = task_get_effective_timer_slack(current);
+			break;
 		case PR_SET_TIMERSLACK:
-			if (arg2 <= 0)
-				current->timer_slack_ns =
-					current->default_timer_slack_ns;
-			else
-				current->timer_slack_ns = arg2;
-			error = 0;
+			if (arg2 <= 0) {
+				me->timer_slack_ns = me->default_timer_slack_ns;
+				break;
+			}
+
+			error = timer_slack_check ?
+				timer_slack_check(me, arg2) : 0;
+			if (!error)
+				me->timer_slack_ns = arg2;
 			break;
 		case PR_MCE_KILL:
 			if (arg4 | arg5)
@@ -2254,6 +2285,16 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 			put_task_struct(tsk);
 			error = 0;
 			break;
+		case PR_SET_NO_NEW_PRIVS:
+			if (arg2 != 1 || arg3 || arg4 || arg5)
+				return -EINVAL;
+
+			task_set_no_new_privs(current);
+			break;
+		case PR_GET_NO_NEW_PRIVS:
+			if (arg2 || arg3 || arg4 || arg5)
+				return -EINVAL;
+			return task_no_new_privs(current) ? 1 : 0;
 		default:
 			error = -EINVAL;
 			break;

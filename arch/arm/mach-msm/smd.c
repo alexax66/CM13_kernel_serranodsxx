@@ -1,7 +1,7 @@
 /* arch/arm/mach-msm/smd.c
  *
  * Copyright (C) 2007 Google, Inc.
- * Copyright (c) 2008-2012, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2008-2015, The Linux Foundation. All rights reserved.
  * Author: Brian Swetland <swetland@google.com>
  *
  * This software is licensed under the terms of the GNU General Public
@@ -32,7 +32,7 @@
 #include <linux/remote_spinlock.h>
 #include <linux/uaccess.h>
 #include <linux/kfifo.h>
-#include <linux/wakelock.h>
+#include <linux/pm.h>
 #include <linux/notifier.h>
 #include <linux/sort.h>
 #include <linux/suspend.h>
@@ -45,7 +45,6 @@
 #include <asm/cacheflush.h>
 
 #include "smd_private.h"
-#include "modem_notifier.h"
 
 #if defined(CONFIG_ARCH_QSD8X50) || defined(CONFIG_ARCH_MSM8X60) \
 	|| defined(CONFIG_ARCH_MSM8960) || defined(CONFIG_ARCH_FSM9XXX) \
@@ -93,7 +92,7 @@ struct smsm_shared_info {
 
 static struct smsm_shared_info smsm_info;
 static struct kfifo smsm_snapshot_fifo;
-static struct wake_lock smsm_snapshot_wakelock;
+static struct wakeup_source smsm_snapshot_ws;
 static int smsm_snapshot_count;
 static DEFINE_SPINLOCK(smsm_snapshot_count_lock);
 
@@ -354,7 +353,7 @@ static remote_spinlock_t remote_spinlock;
 
 static LIST_HEAD(smd_ch_list_loopback);
 static void smd_fake_irq_handler(unsigned long arg);
-static void smsm_cb_snapshot(uint32_t use_wakelock);
+static void smsm_cb_snapshot(uint32_t use_wakeup_source);
 
 static struct workqueue_struct *smsm_cb_wq;
 static void notify_smsm_cb_clients_worker(struct work_struct *work);
@@ -1218,6 +1217,13 @@ static void do_smd_probe(void)
 	}
 }
 
+static void remote_processed_close(struct smd_channel *ch)
+{
+	/* The remote side has observed our close, we can allow a reopen */
+	list_move(&ch->ch_list, &smd_ch_to_close_list);
+	queue_work(channel_close_wq, &finalize_channel_close_work);
+}
+
 static void smd_state_change(struct smd_channel *ch,
 			     unsigned last, unsigned next)
 {
@@ -1227,7 +1233,11 @@ static void smd_state_change(struct smd_channel *ch,
 
 	switch (next) {
 	case SMD_SS_OPENING:
-		if (ch->half_ch->get_state(ch->send) == SMD_SS_CLOSING ||
+		if (last == SMD_SS_OPENED &&
+		    ch->half_ch->get_state(ch->send) == SMD_SS_CLOSED) {
+			/* We missed the CLOSING and CLOSED states */
+			remote_processed_close(ch);
+		} else if (ch->half_ch->get_state(ch->send) == SMD_SS_CLOSING ||
 		    ch->half_ch->get_state(ch->send) == SMD_SS_CLOSED) {
 			ch->half_ch->set_tail(ch->recv, 0);
 			ch->half_ch->set_head(ch->send, 0);
@@ -1248,18 +1258,16 @@ static void smd_state_change(struct smd_channel *ch,
 	case SMD_SS_CLOSED:
 		if (ch->half_ch->get_state(ch->send) == SMD_SS_OPENED) {
 			ch_set_state(ch, SMD_SS_CLOSING);
-			ch->current_packet = 0;
 			ch->pending_pkt_sz = 0;
 			ch->notify(ch->priv, SMD_EVENT_CLOSE);
 		}
+		/* We missed the CLOSING state */
+		if (ch->half_ch->get_state(ch->send) == SMD_SS_CLOSED)
+			remote_processed_close(ch);
 		break;
 	case SMD_SS_CLOSING:
-		if (ch->half_ch->get_state(ch->send) == SMD_SS_CLOSED) {
-			list_move(&ch->ch_list,
-					&smd_ch_to_close_list);
-			queue_work(channel_close_wq,
-						&finalize_channel_close_work);
-		}
+		if (ch->half_ch->get_state(ch->send) == SMD_SS_CLOSED)
+			remote_processed_close(ch);
 		break;
 	}
 }
@@ -2522,8 +2530,7 @@ static int smsm_init(void)
 		pr_err("%s: SMSM state fifo alloc failed %d\n", __func__, i);
 		return i;
 	}
-	wake_lock_init(&smsm_snapshot_wakelock, WAKE_LOCK_SUSPEND,
-			"smsm_snapshot");
+	wakeup_source_init(&smsm_snapshot_ws, "smsm_snapshot");
 
 	if (!smsm_info.state) {
 		smsm_info.state = smem_alloc2(ID_SHARED_STATE,
@@ -2606,7 +2613,7 @@ void smsm_reset_modem_cont(void)
 }
 EXPORT_SYMBOL(smsm_reset_modem_cont);
 
-static void smsm_cb_snapshot(uint32_t use_wakelock)
+static void smsm_cb_snapshot(uint32_t use_wakeup_source)
 {
 	int n;
 	uint32_t new_state;
@@ -2632,11 +2639,11 @@ static void smsm_cb_snapshot(uint32_t use_wakelock)
 	 *
 	 *   This order ensures that 1 will always occur before abc.
 	 */
-	if (use_wakelock) {
+	if (use_wakeup_source) {
 		spin_lock_irqsave(&smsm_snapshot_count_lock, flags);
 		if (smsm_snapshot_count == 0) {
 			SMx_POWER_INFO("SMSM snapshot wake lock\n");
-			wake_lock(&smsm_snapshot_wakelock);
+			__pm_stay_awake(&smsm_snapshot_ws);
 		}
 		++smsm_snapshot_count;
 		spin_unlock_irqrestore(&smsm_snapshot_count_lock, flags);
@@ -2656,8 +2663,8 @@ static void smsm_cb_snapshot(uint32_t use_wakelock)
 
 	/* queue wakelock usage flag */
 	ret = kfifo_in(&smsm_snapshot_fifo,
-			&use_wakelock, sizeof(use_wakelock));
-	if (ret != sizeof(use_wakelock)) {
+			&use_wakeup_source, sizeof(use_wakeup_source));
+	if (ret != sizeof(use_wakeup_source)) {
 		pr_err("%s: SMSM snapshot failure %d\n", __func__, ret);
 		goto restore_snapshot_count;
 	}
@@ -2666,13 +2673,13 @@ static void smsm_cb_snapshot(uint32_t use_wakelock)
 	return;
 
 restore_snapshot_count:
-	if (use_wakelock) {
+	if (use_wakeup_source) {
 		spin_lock_irqsave(&smsm_snapshot_count_lock, flags);
 		if (smsm_snapshot_count) {
 			--smsm_snapshot_count;
 			if (smsm_snapshot_count == 0) {
 				SMx_POWER_INFO("SMSM snapshot wake unlock\n");
-				wake_unlock(&smsm_snapshot_wakelock);
+				__pm_relax(&smsm_snapshot_ws);
 			}
 		} else {
 			pr_err("%s: invalid snapshot count\n", __func__);
@@ -2723,24 +2730,16 @@ static irqreturn_t smsm_irq_handler(int irq, void *data)
 			 */
 			smd_fake_irq_handler(0);
 
-			/* queue modem restart notify chain */
-			modem_queue_start_reset_notify();
-
 		} else if (modm & SMSM_RESET) {
-			pr_err("\nSMSM: Modem SMSM state changed to SMSM_RESET.");
+			pr_err("SMSM: Modem SMSM state changed to SMSM_RESET.\n");
 			if (!disable_smsm_reset_handshake) {
 				apps |= SMSM_RESET;
 				flush_cache_all();
 				outer_flush_all();
 			}
-			modem_queue_start_reset_notify();
-
 		} else if (modm & SMSM_INIT) {
-			if (!(apps & SMSM_INIT)) {
+			if (!(apps & SMSM_INIT))
 				apps |= SMSM_INIT;
-				modem_queue_smsm_init_notify();
-			}
-
 			if (modm & SMSM_SMDINIT)
 				apps |= SMSM_SMDINIT;
 			if ((apps & (SMSM_INIT | SMSM_SMDINIT | SMSM_RPCINIT)) ==
@@ -2748,7 +2747,6 @@ static irqreturn_t smsm_irq_handler(int irq, void *data)
 				apps |= SMSM_RUN;
 		} else if (modm & SMSM_SYSTEM_DOWNLOAD) {
 			pr_err("\nSMSM: Modem SMSM state changed to SMSM_SYSTEM_DOWNLOAD.");
-			modem_queue_start_reset_notify();
 		}
 
 		if (old_apps != apps) {
@@ -2917,7 +2915,7 @@ void notify_smsm_cb_clients_worker(struct work_struct *work)
 	int n;
 	uint32_t new_state;
 	uint32_t state_changes;
-	uint32_t use_wakelock;
+	uint32_t use_wakeup_source;
 	int ret;
 	unsigned long flags;
 
@@ -2956,9 +2954,9 @@ void notify_smsm_cb_clients_worker(struct work_struct *work)
 		}
 
 		/* read wakelock flag */
-		ret = kfifo_out(&smsm_snapshot_fifo, &use_wakelock,
-				sizeof(use_wakelock));
-		if (ret != sizeof(use_wakelock)) {
+		ret = kfifo_out(&smsm_snapshot_fifo, &use_wakeup_source,
+				sizeof(use_wakeup_source));
+		if (ret != sizeof(use_wakeup_source)) {
 			pr_err("%s: snapshot underflow %d\n",
 				__func__, ret);
 			mutex_unlock(&smsm_lock);
@@ -2966,14 +2964,14 @@ void notify_smsm_cb_clients_worker(struct work_struct *work)
 		}
 		mutex_unlock(&smsm_lock);
 
-		if (use_wakelock) {
+		if (use_wakeup_source) {
 			spin_lock_irqsave(&smsm_snapshot_count_lock, flags);
 			if (smsm_snapshot_count) {
 				--smsm_snapshot_count;
 				if (smsm_snapshot_count == 0) {
 					SMx_POWER_INFO("SMSM snapshot"
 						   " wake unlock\n");
-					wake_unlock(&smsm_snapshot_wakelock);
+					__pm_relax(&smsm_snapshot_ws);
 				}
 			} else {
 				pr_err("%s: invalid snapshot count\n",
@@ -3634,7 +3632,7 @@ int __init msm_smd_init(void)
 	return 0;
 }
 
-module_init(msm_smd_init);
+arch_initcall(msm_smd_init);
 
 MODULE_DESCRIPTION("MSM Shared Memory Core");
 MODULE_AUTHOR("Brian Swetland <swetland@google.com>");

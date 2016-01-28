@@ -35,6 +35,9 @@
 #include <linux/buffer_head.h> /* __set_page_dirty_buffers */
 #include <linux/pagevec.h>
 #include <trace/events/writeback.h>
+#ifdef CONFIG_DYNAMIC_PAGE_WRITEBACK
+#include <linux/powersuspend.h>
+#endif
 
 /*
  * Sleep at most 200ms at a time in balance_dirty_pages().
@@ -91,16 +94,46 @@ int vm_dirty_ratio = 20;
 unsigned long vm_dirty_bytes;
 
 /*
+ * The default intervals between `kupdate'-style writebacks
+ */
+#define DEFAULT_DIRTY_WRITEBACK_INTERVAL	 5 * 100 /* centiseconds */
+#define HIGH_DIRTY_WRITEBACK_INTERVAL		15 * 100 /* centiseconds */
+
+/*
  * The interval between `kupdate'-style writebacks
  */
-unsigned int dirty_writeback_interval = 5 * 100; /* centiseconds */
-
+unsigned int dirty_writeback_interval = DEFAULT_DIRTY_WRITEBACK_INTERVAL; /* centiseconds */
 EXPORT_SYMBOL_GPL(dirty_writeback_interval);
+
+#ifdef CONFIG_DYNAMIC_PAGE_WRITEBACK
+/*
+ * The dynamic writeback activation status
+ */
+int dyn_dirty_writeback_enabled = 1;
+EXPORT_SYMBOL_GPL(dyn_dirty_writeback_enabled);
+
+/*
+ * The interval between `kupdate'-style writebacks when the system is active
+ */
+unsigned int dirty_writeback_active_interval = HIGH_DIRTY_WRITEBACK_INTERVAL; /* centiseconds */
+EXPORT_SYMBOL_GPL(dirty_writeback_active_interval);
+
+/*
+ * The interval between `kupdate'-style writebacks when the system is suspended
+ */
+unsigned int dirty_writeback_suspend_interval = DEFAULT_DIRTY_WRITEBACK_INTERVAL; /* centiseconds */
+EXPORT_SYMBOL_GPL(dirty_writeback_suspend_interval);
+#endif
 
 /*
  * The longest time for which data is allowed to remain dirty
  */
-unsigned int dirty_expire_interval = 30 * 100; /* centiseconds */
+#define DEFAULT_DIRTY_EXPIRE_INTERVAL 2000 /* centiseconds */
+#define DEFAULT_SUSPEND_DIRTY_EXPIRE_INTERVAL 12000 /* centiseconds */
+unsigned int dirty_expire_interval,
+	resume_dirty_expire_interval;
+unsigned int sleep_dirty_expire_interval,
+	suspend_dirty_expire_interval;
 
 /*
  * Flag that makes the machine dump writes/reads and block dirtyings.
@@ -447,7 +480,7 @@ static void bdi_writeout_fraction(struct backing_dev_info *bdi,
  * registered backing devices, which, for obvious reasons, can not
  * exceed 100%.
  */
-static unsigned int bdi_min_ratio;
+static unsigned int bdi_min_ratio = 5;
 
 int bdi_set_min_ratio(struct backing_dev_info *bdi, unsigned int min_ratio)
 {
@@ -1386,16 +1419,6 @@ pause:
 		bdi_start_background_writeback(bdi);
 }
 
-void set_page_dirty_balance(struct page *page, int page_mkwrite)
-{
-	if (set_page_dirty(page) || page_mkwrite) {
-		struct address_space *mapping = page_mapping(page);
-
-		if (mapping)
-			balance_dirty_pages_ratelimited(mapping);
-	}
-}
-
 static DEFINE_PER_CPU(int, bdp_ratelimits);
 
 /*
@@ -1515,6 +1538,68 @@ int dirty_writeback_centisecs_handler(ctl_table *table, int write,
 	return 0;
 }
 
+#ifdef CONFIG_DYNAMIC_PAGE_WRITEBACK
+/*
+ * Manages the dirty page writebacks activation status
+ */
+static void set_dirty_writeback_status(bool active) {
+	/* Change the current dirty writeback interval according to the
+	 * status provided */
+	dirty_writeback_interval = (active) ?
+								dirty_writeback_active_interval :
+								dirty_writeback_suspend_interval;
+
+	/* Update the timer related to dirty writebacks interval */
+	bdi_arm_supers_timer();
+
+	/* Print debug info */
+	pr_debug("%s: Set dirty_writeback_interval = %d centisecs\n",
+				__func__, dirty_writeback_interval);
+}
+
+/*
+ * sysctl handler for /proc/sys/vm/dyn_dirty_writeback_enabled
+ */
+int dynamic_dirty_writeback_handler(struct ctl_table *table, int write,
+	void __user *buffer, size_t *lenp, loff_t *ppos)
+{
+	int ret;
+	int old_status = dyn_dirty_writeback_enabled;
+
+	/* Get and store the new status */
+	ret = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
+
+	/* If the dynamic writeback has been enabled then set the active
+	 * dirty writebacks interval, otherwise if the feature has been
+	 * disabled, set the suspend interval (the default interval)
+	 * to restore the standard functionality */
+	if (ret == 0 && write && dyn_dirty_writeback_enabled != old_status)
+		set_dirty_writeback_status(!!dyn_dirty_writeback_enabled);
+
+	return ret;
+}
+
+/*
+ * sysctl handler for /proc/sys/vm/dirty_writeback_active_centisecs
+ */
+int dirty_writeback_active_centisecs_handler(ctl_table *table, int write,
+	void __user *buffer, size_t *length, loff_t *ppos)
+{
+	proc_dointvec_minmax(table, write, buffer, length, ppos);
+	return 0;
+}
+
+/*
+ * sysctl handler for /proc/sys/vm/dirty_writeback_suspend_centisecs
+ */
+int dirty_writeback_suspend_centisecs_handler(ctl_table *table, int write,
+	void __user *buffer, size_t *length, loff_t *ppos)
+{
+	proc_dointvec_minmax(table, write, buffer, length, ppos);
+	return 0;
+}
+#endif
+
 #ifdef CONFIG_BLOCK
 void laptop_mode_timer_fn(unsigned long data)
 {
@@ -1592,6 +1677,55 @@ static struct notifier_block __cpuinitdata ratelimit_nb = {
 	.next		= NULL,
 };
 
+#ifdef CONFIG_DYNAMIC_PAGE_WRITEBACK
+/*
+ * Sets the dirty page writebacks interval for suspended system
+ */
+static void dirty_writeback_power_suspend(struct power_suspend *handler)
+{
+	if (dyn_dirty_writeback_enabled)
+		set_dirty_writeback_status(false);
+}
+
+/*
+ * Sets the dirty page writebacks interval for active system
+ */
+static void dirty_writeback_power_resume(struct power_suspend *handler)
+{
+	if (dyn_dirty_writeback_enabled)
+		set_dirty_writeback_status(true);
+}
+
+/*
+ * Struct for the dirty page writeback management during suspend/resume
+ */
+static struct power_suspend dirty_writeback_suspend = {
+	.suspend = dirty_writeback_power_suspend,
+	.resume = dirty_writeback_power_resume,
+};
+#endif
+
+static void dirty_power_suspend(struct power_suspend *handler)
+{
+	if (dirty_expire_interval != resume_dirty_expire_interval)
+		resume_dirty_expire_interval = dirty_expire_interval;
+
+	dirty_expire_interval = suspend_dirty_expire_interval;
+}
+
+static void dirty_power_resume(struct power_suspend *handler)
+{
+	if (dirty_expire_interval != suspend_dirty_expire_interval)
+		suspend_dirty_expire_interval = dirty_expire_interval;
+
+	dirty_expire_interval = resume_dirty_expire_interval;
+}
+
+static struct power_suspend dirty_suspend = {
+	.suspend = dirty_power_suspend,
+	.resume = dirty_power_resume,
+};
+
 /*
  * Called early on to tune the page writeback dirty limits.
  *
@@ -1613,6 +1747,18 @@ static struct notifier_block __cpuinitdata ratelimit_nb = {
 void __init page_writeback_init(void)
 {
 	int shift;
+
+	dirty_expire_interval = resume_dirty_expire_interval =
+		DEFAULT_DIRTY_EXPIRE_INTERVAL;
+	sleep_dirty_expire_interval = suspend_dirty_expire_interval =
+		DEFAULT_SUSPEND_DIRTY_EXPIRE_INTERVAL;
+
+	register_power_suspend(&dirty_suspend);
+
+#ifdef CONFIG_DYNAMIC_PAGE_WRITEBACK
+	/* Register the dirty page writeback management during suspend/resume */
+	register_power_suspend(&dirty_writeback_suspend);
+#endif
 
 	writeback_set_ratelimit();
 	register_cpu_notifier(&ratelimit_nb);
@@ -1973,31 +2119,24 @@ EXPORT_SYMBOL(account_page_writeback);
  * page dirty in that case, but not all the buffers.  This is a "bottom-up"
  * dirtying, whereas __set_page_dirty_buffers() is a "top-down" dirtying.
  *
- * Most callers have locked the page, which pins the address_space in memory.
- * But zap_pte_range() does not lock the page, however in that case the
- * mapping is pinned by the vma's ->vm_file reference.
- *
- * We take care to handle the case where the page was truncated from the
- * mapping by re-checking page_mapping() inside tree_lock.
+ * The caller must ensure this doesn't race with truncation.  Most will simply
+ * hold the page lock, but e.g. zap_pte_range() calls with the page mapped and
+ * the pte lock held, which also locks out truncat
  */
 int __set_page_dirty_nobuffers(struct page *page)
 {
 	if (!TestSetPageDirty(page)) {
 		struct address_space *mapping = page_mapping(page);
-		struct address_space *mapping2;
 
 		if (!mapping)
 			return 1;
 
 		spin_lock_irq(&mapping->tree_lock);
-		mapping2 = page_mapping(page);
-		if (mapping2) { /* Race with truncate? */
-			BUG_ON(mapping2 != mapping);
-			WARN_ON_ONCE(!PagePrivate(page) && !PageUptodate(page));
-			account_page_dirtied(page, mapping);
-			radix_tree_tag_set(&mapping->page_tree,
-				page_index(page), PAGECACHE_TAG_DIRTY);
-		}
+		BUG_ON(page_mapping(page) != mapping);
+		WARN_ON_ONCE(!PagePrivate(page) && !PageUptodate(page));
+		account_page_dirtied(page, mapping);
+		radix_tree_tag_set(&mapping->page_tree, page_index(page),
+				   PAGECACHE_TAG_DIRTY);
 		spin_unlock_irq(&mapping->tree_lock);
 		if (mapping->host) {
 			/* !PageAnon && !swapper_space */
@@ -2154,12 +2293,10 @@ int clear_page_dirty_for_io(struct page *page)
 		/*
 		 * We carefully synchronise fault handlers against
 		 * installing a dirty pte and marking the page dirty
-		 * at this point. We do this by having them hold the
-		 * page lock at some point after installing their
-		 * pte, but before marking the page dirty.
-		 * Pages are always locked coming in here, so we get
-		 * the desired exclusion. See mm/memory.c:do_wp_page()
-		 * for more comments.
+		 * at this point.  We do this by having them hold the
+		 * page lock while dirtying the page, and pages are
+		 * always locked coming in here, so we get the desired
+		 * exclusion.
 		 */
 		if (TestClearPageDirty(page)) {
 			dec_zone_page_state(page, NR_FILE_DIRTY);

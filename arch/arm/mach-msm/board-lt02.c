@@ -3915,7 +3915,7 @@ static struct gpio_keys_button gpio_keys_button[] = {
 		.desc			= "Vol Down",
 	},
 	{
-		.code			= KEY_HOME,
+		.code			= KEY_HOMEPAGE,
 		.type			= EV_KEY,
 		.gpio			= GPIO_HOME_KEY,
 		.active_low		= 1,

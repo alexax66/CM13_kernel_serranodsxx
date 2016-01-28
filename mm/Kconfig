@@ -110,7 +110,7 @@ config SPARSEMEM_STATIC
 #
 config SPARSEMEM_EXTREME
 	def_bool y
-	depends on SPARSEMEM && !SPARSEMEM_STATIC
+	depends on SPARSEMEM && X86_64 && !SPARSEMEM_STATIC
 
 config SPARSEMEM_VMEMMAP_ENABLE
 	bool
@@ -184,6 +184,21 @@ config SPLIT_PTLOCK_CPUS
 	default "4"
 
 #
+# support for memory balloon compaction
+config BALLOON_COMPACTION
+	bool "Allow for balloon memory compaction/migration"
+	def_bool y
+	depends on COMPACTION && VIRTIO_BALLOON
+	help
+	  Memory fragmentation introduced by ballooning might reduce
+	  significantly the number of 2MB contiguous memory blocks that can be
+	  used within a guest, thus imposing performance penalties associated
+	  with the reduced number of transparent huge pages that could be used
+	  by the guest workload. Allowing the compaction & migration for memory
+	  pages enlisted as being part of memory balloon devices avoids the
+	  scenario aforementioned and helps improving memory defragmentation.
+
+#
 # support for memory compaction
 config COMPACTION
 	bool "Allow for memory compaction"
@@ -245,6 +260,43 @@ config KSM
 	  See Documentation/vm/ksm.txt for more information: KSM is inactive
 	  until a program has madvised that an area is MADV_MERGEABLE, and
 	  root has set /sys/kernel/mm/ksm/run to 1 (if CONFIG_SYSFS is set).
+
+choice
+	prompt "Choose UKSM/KSM strategy"
+	default UKSM
+	depends on KSM
+	help
+	  This option allows to select a UKSM/KSM stragety.
+
+config UKSM
+	bool "Ultra-KSM for page merging"
+	depends on KSM
+	help
+	UKSM is inspired by the Linux kernel project \u2014 KSM(Kernel Same
+	page Merging), but with a fundamentally rewritten core algorithm. With
+	an advanced algorithm, UKSM now can transparently scans all anonymously
+	mapped user space applications with an significantly improved scan speed
+	and CPU efficiency. Since KVM is friendly to KSM, KVM can also benefit from
+	UKSM. Now UKSM has its first stable release and first real world enterprise user.
+	For more information, please goto its project page.
+	(www.kerneldedup.org)
+
+config KSM_LEGACY
+	bool "Legacy KSM implementation"
+	depends on KSM
+	help
+	The legacy KSM implementation from Redhat.
+endchoice
+
+config KSM_CHECK_PAGE
+	bool "Check page before scanning"
+	depends on KSM
+	default n
+	help
+	  If enabled, this will check and skip if page is already scanned in
+	  same KSM scan cycle.
+	  This is useful in situation where you have parent and
+	  child process marking same area for KSM scanning.
 
 config DEFAULT_MMAP_MIN_ADDR
         int "Low address space to protect from user allocation"
@@ -379,6 +431,15 @@ config CLEANCACHE
 	  in a negligible performance hit.
 
 	  If unsure, say Y to enable cleancache
+
+config DYNAMIC_PAGE_WRITEBACK
+	bool "Dynamically manage the dirty page writebacks during suspend/resume"
+	default n
+	help
+	  This feature allows to use different dirty page writeback intervals
+	  when the system is suspended and when the system has been resumed.
+
+	  If unsure, say N to disable this feature
 
 config MEMORY_HOLE_CARVEOUT
         bool

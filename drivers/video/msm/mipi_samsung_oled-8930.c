@@ -17,6 +17,9 @@
 
 #include "mipi_samsung_oled-8930.h"
 #include "mdp4.h"
+#ifdef CONFIG_LCD_NOTIFY
+#include <linux/lcd_notify.h>
+#endif
 
 #if defined(CONFIG_FB_MDP4_ENHANCE)
 #include "mdp4_video_enhance.h"
@@ -940,7 +943,7 @@ static int mipi_samsung_disp_on(struct platform_device *pdev)
 
 	mipi_samsung_disp_send_cmd(mfd, PANEL_LATE_ON, false);
 
-#if !defined(CONFIG_HAS_EARLYSUSPEND)
+#if !defined(CONFIG_POWERSUSPEND)
 	mipi_samsung_disp_send_cmd(mfd, PANEL_LATE_ON, false);
 #endif
 
@@ -1047,6 +1050,10 @@ static int mipi_samsung_disp_on(struct platform_device *pdev)
 
 	pr_info("[lcd] %s\n", __func__);
 
+#ifdef CONFIG_LCD_NOTIFY
+	lcd_notifier_call_chain(LCD_EVENT_ON_END, NULL);
+#endif
+
 	return 0;
 }
 
@@ -1087,6 +1094,10 @@ static int mipi_samsung_disp_off(struct platform_device *pdev)
 #endif
 
 	pr_info("[lcd] %s\n", __func__);
+
+#if defined(CONFIG_MACH_LGE)
+	lcd_notifier_call_chain(LCD_EVENT_OFF_END, NULL);
+#endif
 
 	return 0;
 }
@@ -1195,8 +1206,8 @@ end:
 	return;
 }
 
-#if defined(CONFIG_HAS_EARLYSUSPEND)
-static void mipi_samsung_disp_early_suspend(struct early_suspend *h)
+#if defined(CONFIG_POWERSUSPEND)
+static void mipi_samsung_disp_power_suspend(struct power_suspend *h)
 {
 	struct msm_fb_data_type *mfd;
 
@@ -1213,7 +1224,7 @@ static void mipi_samsung_disp_early_suspend(struct early_suspend *h)
 	pr_info("[lcd] %s\n", __func__);
 }
 
-static void mipi_samsung_disp_late_resume(struct early_suspend *h)
+static void mipi_samsung_disp_late_resume(struct power_suspend *h)
 {
 	struct msm_fb_data_type *mfd;
 
@@ -1290,7 +1301,7 @@ static ssize_t mipi_samsung_disp_get_power(struct device *dev,
 	if (unlikely(mfd->key != MFD_KEY))
 		return -EINVAL;
 
-	rc = snprintf((char *)buf, sizeof(*buf), "%d\n", !mdp_fb_is_power_off(mfd));
+	rc = snprintf((char *)buf, (int)sizeof(buf), "%d\n", !mdp_fb_is_power_off(mfd));
 	pr_info("mipi_samsung_disp_get_power(%d)\n", !mdp_fb_is_power_off(mfd));
 
 	return rc;
@@ -1615,7 +1626,7 @@ static ssize_t mipi_samsung_fps_store(struct device *dev,
 
 	mfd = platform_get_drvdata(msd.msm_pdev);
 
-	if (!mdp_fb_is_power_off(mfd) == FALSE) {
+	if (mdp_fb_is_power_off(mfd) == TRUE) {
 		pr_err("%s fps set error, panel power off 1", __func__);
 		return size;
 	}
@@ -1638,7 +1649,7 @@ static ssize_t mipi_samsung_fps_store(struct device *dev,
 
 	mutex_lock(&dsi_tx_mutex);
 
-	if (!mdp_fb_is_power_off(mfd) == FALSE) {
+	if (mdp_fb_is_power_off(mfd) == TRUE) {
 		mutex_unlock(&dsi_tx_mutex);
 		pr_info("%s fps set error, panel power off 2", __func__);
 		return size;
@@ -2023,15 +2034,15 @@ static int __devinit mipi_samsung_disp_probe(struct platform_device *pdev)
 
 	mutex_init(&dsi_tx_mutex);
 
-#if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_LCD_CLASS_DEVICE)
+#if defined(CONFIG_POWERSUSPEND) || defined(CONFIG_LCD_CLASS_DEVICE)
 	msd.msm_pdev = msm_fb_added_dev;
 #endif
 
-#if defined(CONFIG_HAS_EARLYSUSPEND)
-	msd.early_suspend.suspend = mipi_samsung_disp_early_suspend;
-	msd.early_suspend.resume = mipi_samsung_disp_late_resume;
-	msd.early_suspend.level = EARLY_SUSPEND_LEVEL_BLANK_SCREEN;
-	register_early_suspend(&msd.early_suspend);
+#if defined(CONFIG_POWERSUSPEND)
+	msd.power_suspend.suspend = mipi_samsung_disp_power_suspend;
+	msd.power_suspend.resume = mipi_samsung_disp_late_resume;
+//	msd.power_suspend.level = EARLY_SUSPEND_LEVEL_BLANK_SCREEN;
+	register_power_suspend(&msd.power_suspend);
 
 #endif
 
