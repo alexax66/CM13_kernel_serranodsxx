@@ -856,7 +856,11 @@ quiet_cmd_sysmap = SYSMAP
 
 # Sort exception table at build time
 quiet_cmd_sortextable = SORTEX
+ifndef CONFIG_MODULES
+      cmd_sortextable = $(objtree)/scripts/sortextable --enable-update-extable-sort-needed
+else
       cmd_sortextable = $(objtree)/scripts/sortextable
+endif
 
 # Link of vmlinux
 # If CONFIG_KALLSYMS is set .version is already updated
