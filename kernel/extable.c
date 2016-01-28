@@ -35,13 +35,11 @@ DEFINE_MUTEX(text_mutex);
 extern struct exception_table_entry __start___ex_table[];
 extern struct exception_table_entry __stop___ex_table[];
 
-#if defined(CONFIG_BUILDTIME_EXTABLE_SORT) && !defined(CONFIG_MODULES)
 /* Sort the kernel's built-in exception table */
 void __init sort_main_extable(void)
 {
 	sort_extable(__start___ex_table, __stop___ex_table);
 }
-#endif
 
 /* Given an address, look for it in the exception tables. */
 const struct exception_table_entry *search_exception_tables(unsigned long addr)
