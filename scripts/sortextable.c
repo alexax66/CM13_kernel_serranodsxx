@@ -31,6 +31,8 @@
 #include <tools/be_byteshift.h>
 #include <tools/le_byteshift.h>
 
+#define UPDATE_MAIN_EXTABLE_SORT_NEEDED "--enable-update-extable-sort-needed" 
+
 static int fd_map;	/* File descriptor for file being modified. */
 static int mmap_failed; /* Boolean flag. */
 static void *ehdr_curr; /* current ElfXX_Ehdr *  for resource cleanup */
@@ -216,7 +218,7 @@ static void sort_relative_table(char *extab_image, int image_size)
 }
 
 static void
-do_file(char const *const fname)
+do_file(char const *const fname, int update_main_extable_sort_needed)
 {
 	table_sort_t custom_sort;
 	Elf32_Ehdr *ehdr = mmap_file(fname);
@@ -262,10 +264,10 @@ do_file(char const *const fname)
 	case EM_386:
 	case EM_X86_64:
 	case EM_S390:
-	case EM_ARM:
 		custom_sort = sort_relative_table;
 		break;
 	case EM_MIPS:
+	case EM_ARM:
 		break;
 	}  /* end switch */
 
@@ -282,7 +284,8 @@ do_file(char const *const fname)
 				"unrecognized ET_EXEC file: %s\n", fname);
 			fail_file();
 		}
-		do32(ehdr, fname, custom_sort);
+		do32(ehdr, fname, custom_sort,
+			update_main_extable_sort_needed);
 		break;
 	case ELFCLASS64: {
 		Elf64_Ehdr *const ghdr = (Elf64_Ehdr *)ehdr;
@@ -292,7 +295,8 @@ do_file(char const *const fname)
 				"unrecognized ET_EXEC file: %s\n", fname);
 			fail_file();
 		}
-		do64(ghdr, fname, custom_sort);
+		do64(ghdr, fname, custom_sort,
+			update_main_extable_sort_needed);
 		break;
 	}
 	}  /* end switch */
@@ -300,19 +304,41 @@ do_file(char const *const fname)
 	cleanup();
 }
 
+static void print_usage_and_exit(const char *exec_name)
+{
+	fprintf(stderr, "usage: %s [" UPDATE_MAIN_EXTABLE_SORT_NEEDED \
+			"] vmlinux...\n", exec_name);
+	exit(0);
+}
+
 int
 main(int argc, char *argv[])
 {
 	int n_error = 0;  /* gcc-4.3.0 false positive complaint */
 	int i;
+	int argc_start = 1;
+	int update_main_extable_sort_needed = 0;
 
-	if (argc < 2) {
-		fprintf(stderr, "usage: sortextable vmlinux...\n");
-		return 0;
+	if (argc < 2)
+		print_usage_and_exit(argv[0]);
+
+	if (!strcmp(argv[1], UPDATE_MAIN_EXTABLE_SORT_NEEDED)) {
+		argc_start = 2;
+		update_main_extable_sort_needed = 1;
 	}
 
+	if (argc == 2 && update_main_extable_sort_needed)
+		print_usage_and_exit(argv[0]);
+
 	/* Process each file in turn, allowing deep failure. */
-	for (i = 1; i < argc; i++) {
+	for (i = argc_start; i < argc; i++) { 
+		if (!strcmp(argv[i], UPDATE_MAIN_EXTABLE_SORT_NEEDED)) {
+			fprintf(stderr, UPDATE_MAIN_EXTABLE_SORT_NEEDED     \
+					" can only be the first flag of %s" \
+					": omitting\n", argv[0]);
+			continue;
+		}
+
 		char *file = argv[i];
 		int const sjval = setjmp(jmpenv);
 
@@ -326,7 +352,7 @@ main(int argc, char *argv[])
 			fd_map = -1;
 			ehdr_curr = NULL;
 			mmap_failed = 1;
-			do_file(file);
+			do_file(file, update_main_extable_sort_needed);
 			break;
 		case SJ_FAIL:    /* error in do_file or below */
 			++n_error;
