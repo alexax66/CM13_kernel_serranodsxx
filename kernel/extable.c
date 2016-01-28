@@ -38,6 +38,7 @@ extern struct exception_table_entry __stop___ex_table[];
 /* Cleared by build time tools if the table is already sorted. */
 u32 __initdata main_extable_sort_needed = 1;
 
+#if defined(CONFIG_BUILDTIME_EXTABLE_SORT) && !defined(CONFIG_MODULES)
 /* Sort the kernel's built-in exception table */
 void __init sort_main_extable(void)
 {
@@ -46,6 +47,7 @@ void __init sort_main_extable(void)
 		sort_extable(__start___ex_table, __stop___ex_table);
 	}
 }
+#endif
 
 /* Given an address, look for it in the exception tables. */
 const struct exception_table_entry *search_exception_tables(unsigned long addr)

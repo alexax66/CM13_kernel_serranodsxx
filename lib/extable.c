@@ -15,6 +15,7 @@
 #include <asm/uaccess.h>
 
 #ifndef ARCH_HAS_SORT_EXTABLE
+#if defined(CONFIG_BUILDTIME_EXTABLE_SORT) && !defined(CONFIG_MODULES)
 /*
  * The exception table needs to be sorted so that the binary
  * search that we use to find entries in it works properly.
@@ -39,6 +40,7 @@ void sort_extable(struct exception_table_entry *start,
 	sort(start, finish - start, sizeof(struct exception_table_entry),
 	     cmp_ex, NULL);
 }
+#endif
 
 #ifdef CONFIG_MODULES
 /*
