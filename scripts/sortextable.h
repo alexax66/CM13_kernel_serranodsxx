@@ -90,8 +90,7 @@ static int compare_extable(const void *a, const void *b)
 }
 
 static void
-do_func(Elf_Ehdr *ehdr, char const *const fname, table_sort_t custom_sort,
-	int update_main_extable_sort_needed)
+do_func(Elf_Ehdr *ehdr, char const *const fname, table_sort_t custom_sort)
 {
 	Elf_Shdr *shdr;
 	Elf_Shdr *shstrtab_sec;
@@ -175,9 +174,6 @@ do_func(Elf_Ehdr *ehdr, char const *const fname, table_sort_t custom_sort,
 	/* If there were relocations, we no longer need them. */
 	if (relocs)
 		memset(relocs, 0, relocs_size);
-
-	if (!update_main_extable_sort_needed)
-		return;
 
 	/* find main_extable_sort_needed */
 	sort_needed_sym = NULL;
