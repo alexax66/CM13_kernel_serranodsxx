@@ -588,8 +588,8 @@ static void pm_wakeup_timer_fn(unsigned long data)
 
 	spin_lock_irqsave(&ws->lock, flags);
 
+	if (ws->active && ws->timer_expires
 	    && time_after_eq(jiffies, ws->timer_expires)) {
-	    && time_after_eq(jiffies, ws->timer_expires))
 		wakeup_source_deactivate(ws);
 		ws->expire_count++;
 	}
@@ -776,7 +776,8 @@ static int print_wakeup_source_stats(struct seq_file *m,
 
 	ret = seq_printf(m, "%-12s\t%lu\t\t%lu\t\t%lu\t\t%lu\t\t"
 			"%lld\t\t%lld\t\t%lld\t\t%lld\n",
-			ws->name, active_count, ws->event_count, ws->hit_count,
+			ws->name, active_count, ws->event_count,
+			ws->wakeup_count, ws->expire_count,
 			ktime_to_ms(active_time), ktime_to_ms(total_time),
 			ktime_to_ms(max_time), ktime_to_ms(ws->last_time));
 
