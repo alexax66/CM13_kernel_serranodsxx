@@ -21,6 +21,10 @@
 #ifndef _LINUX_SWEEP2WAKE_H
 #define _LINUX_SWEEP2WAKE_H
 
-extern int s2w_switch, s2w_s2sonly;
+extern int s2w_switch;
+
+extern int s2d_enabled;
+
+extern void sweep2wake_pwrtrigger(void);
 
 #endif	/* _LINUX_SWEEP2WAKE_H */
