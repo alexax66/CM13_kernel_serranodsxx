@@ -29,6 +29,9 @@
 #include <mach/hardware.h>
 #include <mach/gpio.h>
 #include <mach/clk.h>
+#ifdef CONFIG_FB_MSM_LCD_NOTIFY
+#include <linux/lcd_notify.h>
+#endif
 
 #include "msm_fb.h"
 #include "mipi_dsi.h"
@@ -107,6 +110,9 @@ static int mipi_dsi_off(struct platform_device *pdev)
 	struct msm_panel_info *pinfo;
 	uint32 dsi_ctrl;
 
+#ifdef CONFIG_FB_MSM_LCD_NOTIFY
+	lcd_notifier_call_chain(LCD_EVENT_OFF_START, NULL);
+#endif
 	pr_debug("%s+:\n", __func__);
 
 	mfd = platform_get_drvdata(pdev);
@@ -183,6 +189,9 @@ static int mipi_dsi_off(struct platform_device *pdev)
 	else
 		up(&mfd->dma->mutex);
 
+#ifdef CONFIG_FB_MSM_LCD_NOTIFY
+	lcd_notifier_call_chain(LCD_EVENT_OFF_END, NULL);
+#endif
 	pr_debug("%s-:\n", __func__);
 
 	return ret;
@@ -206,6 +215,9 @@ static int mipi_dsi_on(struct platform_device *pdev)
 	static int is_booting = 1;
 #endif
 
+#ifdef CONFIG_FB_MSM_LCD_NOTIFY
+	lcd_notifier_call_chain(LCD_EVENT_ON_START, NULL);
+#endif
 	pr_debug("%s+:\n", __func__);
 
 #if defined(CONFIG_MIPI_SAMSUNG_ESD_REFRESH) || defined(CONFIG_ESD_ERR_FG_RECOVERY)
@@ -464,6 +476,9 @@ static int mipi_dsi_on(struct platform_device *pdev)
 	else
 		up(&mfd->dma->mutex);
 
+#ifdef CONFIG_FB_MSM_LCD_NOTIFY
+	lcd_notifier_call_chain(LCD_EVENT_ON_END, NULL);
+#endif
 	pr_debug("%s-:\n", __func__);
 
 	return ret;
