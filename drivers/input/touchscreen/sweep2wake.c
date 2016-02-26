@@ -64,6 +64,13 @@ MODULE_LICENSE("GPLv2");
 #define S2W_X_B1                400
 #define S2W_X_B2                700
 #define S2W_X_FINAL             250
+#elif defined(CONFIG_MACH_SERRANO)
+#define S2W_Y_MAX               960
+#define S2W_X_MAX               540
+#define S2W_Y_LIMIT             S2W_Y_MAX-98
+#define S2W_X_B1                240
+#define S2W_X_B2                330
+#define S2W_X_FINAL             125
 #else
 /* defaults */
 #define S2W_Y_LIMIT             2350
