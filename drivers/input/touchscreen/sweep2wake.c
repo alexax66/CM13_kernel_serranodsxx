@@ -55,21 +55,22 @@ MODULE_LICENSE("GPLv2");
 #define S2W_DEFAULT		0
 #define S2W_PWRKEY_DUR          60
 
-#ifdef CONFIG_MACH_MSM8974_HAMMERHEAD
-/* Hammerhead aka Nexus 5 */
-#define S2W_Y_MAX               1920
-#define S2W_X_MAX               1080
-#define S2W_Y_LIMIT             S2W_Y_MAX-130
-#define S2W_X_B1                400
-#define S2W_X_B2                700
-#define S2W_X_FINAL             250
-#elif defined(CONFIG_MACH_SERRANO)
+#ifdef CONFIG_MACH_SERRANO
 #define S2W_Y_MAX               960
 #define S2W_X_MAX               540
 #define S2W_Y_LIMIT             S2W_Y_MAX-98
-#define S2W_X_B1                240
-#define S2W_X_B2                330
 #define S2W_X_FINAL             125
+
+/* Right -> Left */
+#define S2W_X_B0                128
+#define S2W_X_B1                S2W_X_B0+112
+#define S2W_X_B2                S2W_X_B0+202
+
+/* Left -> Right */
+#define S2W_X_B3                S2W_X_B0+98
+#define S2W_X_B4                S2W_X_MAX-225
+#define S2W_X_B5                S2W_X_MAX-S2W_X_B0
+
 #else
 /* defaults */
 #define S2W_Y_LIMIT             2350
@@ -79,13 +80,13 @@ MODULE_LICENSE("GPLv2");
 #define S2W_X_FINAL             300
 #endif
 
-
 /* Resources */
 int s2w_switch = S2W_DEFAULT;
 static int touch_x = 0, touch_y = 0;
 static bool touch_x_called = false, touch_y_called = false;
 static bool scr_suspended = false, exec_count = true;
 static bool scr_on_touch = false, barrier[2] = {false, false};
+static bool r_barrier[2] = {false, false};
 #ifndef CONFIG_HAS_EARLYSUSPEND
 static struct notifier_block s2w_lcd_notif;
 #endif
@@ -136,17 +137,20 @@ static void sweep2wake_reset(void) {
 	exec_count = true;
 	barrier[0] = false;
 	barrier[1] = false;
+	r_barrier[0] = false;
+	r_barrier[1] = false;
 	scr_on_touch = false;
 }
 
 /* Sweep2wake main function */
 static void detect_sweep2wake(int x, int y, bool st)
 {
-        int prevx = 0, nextx = 0;
-        bool single_touch = st;
+	int prevx = 0, nextx = 0;
+	int r_prevx = 0, r_nextx = 0;
+	bool single_touch = st;
 #if S2W_DEBUG
-        pr_info(LOGTAG"x,y(%4d,%4d) single:%s\n",
-                x, y, (single_touch) ? "true" : "false");
+	pr_info(LOGTAG"x,y(%4d,%4d) single:%s\n",
+		x, y, (single_touch) ? "true" : "false");
 #endif
 	//left->right
 	if ((single_touch) && (scr_suspended == true) && (s2w_switch == 1)) {
@@ -198,6 +202,33 @@ static void detect_sweep2wake(int x, int y, bool st)
 				if ((x < prevx) &&
 				    (y > S2W_Y_LIMIT)) {
 					if (x < S2W_X_FINAL) {
+						if (exec_count) {
+							pr_info(LOGTAG"OFF\n");
+							sweep2wake_pwrtrigger();
+							exec_count = false;
+						}
+					}
+				}
+			}
+		}
+		r_prevx = S2W_X_B0;
+		r_nextx = S2W_X_B3;
+		if ((r_barrier[0] == true) ||
+		   ((x > r_prevx) &&
+		    (x < r_nextx) &&
+		    (y > S2W_Y_LIMIT))) {
+			r_prevx = r_nextx;
+			r_nextx = S2W_X_B4;
+			r_barrier[0] = true;
+			if ((r_barrier[1] == true) ||
+			   ((x > r_prevx) &&
+			    (x < r_nextx) &&
+			    (y > S2W_Y_LIMIT))) {
+				r_prevx = r_nextx;
+				r_barrier[1] = true;
+				if ((x > r_prevx) &&
+				    (y > S2W_Y_LIMIT)) {
+					if (x > S2W_X_B5) {
 						if (exec_count) {
 							pr_info(LOGTAG"OFF\n");
 							sweep2wake_pwrtrigger();
