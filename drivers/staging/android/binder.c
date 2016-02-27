@@ -1792,8 +1792,16 @@ static void binder_transaction(struct binder_proc *proc,
 	list_add_tail(&t->work.entry, target_list);
 	tcomplete->type = BINDER_WORK_TRANSACTION_COMPLETE;
 	list_add_tail(&tcomplete->entry, &thread->todo);
-	if (target_wait)
-		wake_up_interruptible(target_wait);
+	if (target_wait) {
+		if (reply || !(t->flags & TF_ONE_WAY)) {
+			preempt_disable();
+			wake_up_interruptible_sync(target_wait);
+			sched_preempt_enable_no_resched();
+		}
+		else {
+			wake_up_interruptible(target_wait);
+		}
+	}
 	return;
 
 err_get_unused_fd_failed:
@@ -1840,8 +1848,10 @@ err_no_context_mgr_node:
 		thread->return_error = return_error;
 }
 
-int binder_thread_write(struct binder_proc *proc, struct binder_thread *thread,
-			void __user *buffer, int size, signed long *consumed)
+static int binder_thread_write(struct binder_proc *proc,
+			struct binder_thread *thread,
+			void __user *buffer, int size,
+			signed long *consumed)
 {
 	uint32_t cmd;
 	void __user *ptr = buffer + *consumed;
@@ -2018,8 +2028,11 @@ int binder_thread_write(struct binder_proc *proc, struct binder_thread *thread,
 				BUG_ON(!buffer->target_node->has_async_transaction);
 				if (list_empty(&buffer->target_node->async_todo))
 					buffer->target_node->has_async_transaction = 0;
-				else
-					list_move_tail(buffer->target_node->async_todo.next, &thread->todo);
+				else {
+					list_move_tail(buffer->target_node->async_todo.next, &thread->proc->todo);
+					wake_up_interruptible(&thread->proc->wait);
+				}
+
 			}
 			trace_binder_transaction_buffer_release(buffer);
 			binder_transaction_buffer_release(proc, buffer, NULL);
@@ -2227,8 +2240,8 @@ int binder_thread_write(struct binder_proc *proc, struct binder_thread *thread,
 	return 0;
 }
 
-void binder_stat_br(struct binder_proc *proc, struct binder_thread *thread,
-		    uint32_t cmd)
+static void binder_stat_br(struct binder_proc *proc,
+			   struct binder_thread *thread, uint32_t cmd)
 {
 	trace_binder_return(cmd);
 	if (_IOC_NR(cmd) < ARRAY_SIZE(binder_stats.br)) {
