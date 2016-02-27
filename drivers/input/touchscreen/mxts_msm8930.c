@@ -30,6 +30,15 @@
 #include <linux/earlysuspend.h>
 #endif
 
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+#ifdef CONFIG_TOUCHSCREEN_SWEEP2WAKE
+#include <linux/input/sweep2wake.h>
+#endif
+#ifdef CONFIG_TOUCHSCREEN_DOUBLETAP2WAKE
+#include <linux/input/doubletap2wake.h>
+#endif
+#endif
+
 #if (CHECK_ANTITOUCH |CHECK_ANTITOUCH_SERRANO |CHECK_ANTITOUCH_GOLDEN)
 #define MXT_T61_TIMER_ONESHOT			0
 #define MXT_T61_TIMER_REPEAT			1
@@ -4327,27 +4336,72 @@ static void mxt_early_suspend(struct early_suspend *h)
 {
 	struct mxt_data *data = container_of(h, struct mxt_data,
 								early_suspend);
+	bool prevent_sleep;
+
 #if TSP_INFORM_CHARGER
 	cancel_delayed_work_sync(&data->noti_dwork);
 #endif
 
-	mutex_lock(&data->input_dev->mutex);
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+#if defined(CONFIG_TOUCHSCREEN_SWEEP2WAKE) || defined(CONFIG_TOUCHSCREEN_DOUBLETAP2WAKE)
+	prevent_sleep = false;
+#endif
+#if defined(CONFIG_TOUCHSCREEN_SWEEP2WAKE)
+	prevent_sleep = (s2w_switch == 1);
+#endif
+#if defined(CONFIG_TOUCHSCREEN_DOUBLETAP2WAKE)
+	prevent_sleep = prevent_sleep || (dt2w_switch > 0);
+#endif
+#endif
 
-	mxt_stop(data);
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+	if (prevent_sleep) {
+		enable_irq_wake(data->client->irq);
+		mxt_release_all_finger(data);
+	}
 
-	mutex_unlock(&data->input_dev->mutex);
+	if (!prevent_sleep)
+#endif
+	{
+		mutex_lock(&data->input_dev->mutex);
+		mxt_stop(data);
+		mutex_unlock(&data->input_dev->mutex);
+	}
+
 }
 
 static void mxt_late_resume(struct early_suspend *h)
 {
 	struct mxt_data *data = container_of(h, struct mxt_data,
 								early_suspend);
-	mutex_lock(&data->input_dev->mutex);
+	bool prevent_sleep;
 
-	mxt_start(data);
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+#if defined(CONFIG_TOUCHSCREEN_SWEEP2WAKE) || defined(CONFIG_TOUCHSCREEN_DOUBLETAP2WAKE)
+	prevent_sleep = false;
+#endif
+#if defined(CONFIG_TOUCHSCREEN_SWEEP2WAKE)
+	prevent_sleep = (s2w_switch == 1);
+#endif
+#if defined(CONFIG_TOUCHSCREEN_DOUBLETAP2WAKE)
+	prevent_sleep = prevent_sleep || (dt2w_switch > 0);
+#endif
+#endif
 
-	mutex_unlock(&data->input_dev->mutex);
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+	if (prevent_sleep)
+		disable_irq_wake(data->client->irq);
+
+	if (!prevent_sleep)
+#endif
+	{
+		mutex_lock(&data->input_dev->mutex);
+		mxt_start(data);
+		mutex_unlock(&data->input_dev->mutex);
+	}
+
 }
+
 #else
 static int mxt_suspend(struct device *dev)
 {
