@@ -163,7 +163,8 @@ static u64 get_coherent_dma_mask(struct device *dev)
 	return mask;
 }
 
-static void __dma_clear_buffer(struct page *page, size_t size)
+static void __dma_clear_buffer(struct page *page, size_t size,
+					struct dma_attrs *attrs)
 {
 	/*
 	 * Ensure that the allocated pages are zeroed, and that any data
@@ -172,7 +173,8 @@ static void __dma_clear_buffer(struct page *page, size_t size)
 	if (!PageHighMem(page)) {
 		void *ptr = page_address(page);
 		if (ptr) {
-			memset(ptr, 0, size);
+			if (!dma_get_attr(DMA_ATTR_SKIP_ZEROING, attrs))
+				memset(ptr, 0, size);
 			dmac_flush_range(ptr, ptr + size);
 			outer_flush_range(__pa(ptr), __pa(ptr) + size);
 		}
@@ -181,7 +183,8 @@ static void __dma_clear_buffer(struct page *page, size_t size)
 		phys_addr_t end = base + size;
 		while (size > 0) {
 			void *ptr = kmap_atomic(page);
-			memset(ptr, 0, PAGE_SIZE);
+			if (!dma_get_attr(DMA_ATTR_SKIP_ZEROING, attrs))
+				memset(ptr, 0, PAGE_SIZE);
 			dmac_flush_range(ptr, ptr + PAGE_SIZE);
 			kunmap_atomic(ptr);
 			page++;
@@ -211,7 +214,7 @@ static struct page *__dma_alloc_buffer(struct device *dev, size_t size, gfp_t gf
 	for (p = page + (size >> PAGE_SHIFT), e = page + (1 << order); p < e; p++)
 		__free_page(p);
 
-	__dma_clear_buffer(page, size);
+	__dma_clear_buffer(page, size, NULL);
 
 	return page;
 }
@@ -328,7 +331,8 @@ core_initcall(consistent_init);
 
 static void *__alloc_from_contiguous(struct device *dev, size_t size,
 				     pgprot_t prot, struct page **ret_page,
-				     bool no_kernel_mapping, const void *caller);
+				     const void *caller,
+				     struct dma_attrs *attrs);
 
 static struct arm_vmregion_head coherent_head = {
 	.vm_lock	= __SPIN_LOCK_UNLOCKED(&coherent_head.vm_lock),
@@ -357,8 +361,8 @@ static int __init coherent_init(void)
 	if (!IS_ENABLED(CONFIG_CMA))
 		return 0;
 
-	ptr = __alloc_from_contiguous(NULL, size, prot, &page, false,
-						coherent_init);
+	ptr = __alloc_from_contiguous(NULL, size, prot, &page,
+					coherent_init, NULL);
 	if (ptr) {
 		coherent_head.vm_start = (unsigned long) ptr;
 		coherent_head.vm_end = (unsigned long) ptr + size;
@@ -411,7 +415,7 @@ void __init dma_contiguous_remap(void)
 		map.type = MT_MEMORY_DMA_READY;
 
 		/*
-		 *  Clear previous low-memory mapping to ensure that the
+		 * Clear previous low-memory mapping to ensure that the
 		 * TLB does not see any conflicting entries, then flush
 		 * the TLB of the old entries before creating new mappings.
 		 *
@@ -647,19 +651,26 @@ static int __free_from_pool(void *cpu_addr, size_t size)
 #define NO_KERNEL_MAPPING_DUMMY	0x2222
 static void *__alloc_from_contiguous(struct device *dev, size_t size,
 				     pgprot_t prot, struct page **ret_page,
-				     bool no_kernel_mapping,
-				     const void *caller)
+				     const void *caller,
+				     struct dma_attrs *attrs)
 {
 	unsigned long order = get_order(size);
 	size_t count = size >> PAGE_SHIFT;
 	struct page *page;
 	void *ptr;
+	bool no_kernel_mapping = dma_get_attr(DMA_ATTR_NO_KERNEL_MAPPING,
+							attrs);
 
 	page = dma_alloc_from_contiguous(dev, count, order);
 	if (!page)
 		return NULL;
 
-	__dma_clear_buffer(page, size);
+	/*
+	 * skip completely if we neither need to zero nor sync.
+	 */
+	if (!(dma_get_attr(DMA_ATTR_SKIP_CPU_SYNC, attrs) &&
+	      dma_get_attr(DMA_ATTR_SKIP_ZEROING, attrs)))
+		__dma_clear_buffer(page, size, attrs);
 
 	if (!PageHighMem(page)) {
 		__dma_remap(page, size, prot, no_kernel_mapping);
@@ -740,7 +751,7 @@ static void *__alloc_simple_buffer(struct device *dev, size_t size, gfp_t gfp,
 
 static void *__dma_alloc(struct device *dev, size_t size, dma_addr_t *handle,
 			 gfp_t gfp, pgprot_t prot, const void *caller,
-			 bool no_kernel_mapping)
+			 struct dma_attrs *attrs)
 {
 	u64 mask = get_coherent_dma_mask(dev);
 	struct page *page;
@@ -781,7 +792,7 @@ static void *__dma_alloc(struct device *dev, size_t size, dma_addr_t *handle,
 		addr = __alloc_from_pool(dev, size, &page, caller);
 	else
 		addr = __alloc_from_contiguous(dev, size, prot, &page,
-						no_kernel_mapping, caller);
+						caller, attrs);
 
 	if (addr)
 		*handle = pfn_to_dma(dev, page_to_pfn(page));
@@ -798,14 +809,12 @@ void *arm_dma_alloc(struct device *dev, size_t size, dma_addr_t *handle,
 {
 	pgprot_t prot = __get_dma_pgprot(attrs, PAGE_KERNEL);
 	void *memory;
-	bool no_kernel_mapping = dma_get_attr(DMA_ATTR_NO_KERNEL_MAPPING,
-					attrs);
 
 	if (dma_alloc_from_coherent(dev, size, handle, &memory))
 		return memory;
 
 	return __dma_alloc(dev, size, handle, gfp, prot,
-			   __builtin_return_address(0), no_kernel_mapping);
+			   __builtin_return_address(0), attrs);
 }
 
 /*
@@ -865,25 +874,27 @@ static void dma_cache_maint_page(struct page *page, unsigned long offset,
 	size_t size, enum dma_data_direction dir,
 	void (*op)(const void *, size_t, int))
 {
+	unsigned long pfn;
+	size_t left = size;
+
+	pfn = page_to_pfn(page) + offset / PAGE_SIZE;
+	offset %= PAGE_SIZE;
+
 	/*
 	 * A single sg entry may refer to multiple physically contiguous
 	 * pages.  But we still need to process highmem pages individually.
 	 * If highmem is not configured then the bulk of this loop gets
 	 * optimized out.
 	 */
-	size_t left = size;
 	do {
 		size_t len = left;
 		void *vaddr;
 
+		page = pfn_to_page(pfn);
+
 		if (PageHighMem(page)) {
-			if (len + offset > PAGE_SIZE) {
-				if (offset >= PAGE_SIZE) {
-					page += offset / PAGE_SIZE;
-					offset %= PAGE_SIZE;
-				}
+			if (len + offset > PAGE_SIZE)
 				len = PAGE_SIZE - offset;
-			}
 
 			if (cache_is_vipt_nonaliasing()) {
 				vaddr = kmap_atomic(page);
@@ -901,7 +912,7 @@ static void dma_cache_maint_page(struct page *page, unsigned long offset,
 			op(vaddr, len, dir);
 		}
 		offset = 0;
-		page++;
+		pfn++;
 		left -= len;
 	} while (left);
 }
@@ -1158,7 +1169,7 @@ static struct page **__iommu_alloc_buffer(struct device *dev, size_t size, gfp_t
 		while (--j)
 			pages[i + j] = pages[i] + j;
 
-		__dma_clear_buffer(pages[i], PAGE_SIZE << order);
+		__dma_clear_buffer(pages[i], PAGE_SIZE << order, NULL);
 		i += 1 << order;
 		count -= 1 << order;
 	}
@@ -1316,7 +1327,7 @@ static void *arm_iommu_alloc_attrs(struct device *dev, size_t size,
 
 	/* Following is a work-around (a.k.a. hack) to prevent pages
 	 * with __GFP_COMP being passed to split_page() which cannot
-	 * handle them. The real problem is that this flag probably
+	 * handle them.  The real problem is that this flag probably
 	 * should be 0 on ARM as it is not supported on this
 	 * platform--see CONFIG_HUGETLB_PAGE. */
 	gfp &= ~(__GFP_COMP);
@@ -1401,7 +1412,8 @@ void arm_iommu_free_attrs(struct device *dev, size_t size, void *cpu_addr,
  */
 static int __map_sg_chunk(struct device *dev, struct scatterlist *sg,
 			  size_t size, dma_addr_t *handle,
-			  enum dma_data_direction dir, struct dma_attrs *attrs)
+			  enum dma_data_direction dir,
+			  struct dma_attrs *attrs)
 {
 	struct dma_iommu_mapping *mapping = dev->archdata.mapping;
 	dma_addr_t iova, iova_base;
