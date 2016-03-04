@@ -4344,7 +4344,7 @@ static void mxt_early_suspend(struct early_suspend *h)
 
 #ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
 #if defined(CONFIG_TOUCHSCREEN_SWEEP2WAKE) || defined(CONFIG_TOUCHSCREEN_DOUBLETAP2WAKE)
-	prevent_sleep = false;
+	prevent_sleep = true;
 #endif
 #if defined(CONFIG_TOUCHSCREEN_SWEEP2WAKE)
 	prevent_sleep = (s2w_switch == 1);
@@ -4378,7 +4378,7 @@ static void mxt_late_resume(struct early_suspend *h)
 
 #ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
 #if defined(CONFIG_TOUCHSCREEN_SWEEP2WAKE) || defined(CONFIG_TOUCHSCREEN_DOUBLETAP2WAKE)
-	prevent_sleep = false;
+	prevent_sleep = true;
 #endif
 #if defined(CONFIG_TOUCHSCREEN_SWEEP2WAKE)
 	prevent_sleep = (s2w_switch == 1);
